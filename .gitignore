@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.js
+*.d.ts
+*.js.map
+!vitest.config.ts
+.vscode
+.claude
+
+.env
+.env.*
+*.log
