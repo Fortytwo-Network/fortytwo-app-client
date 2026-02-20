@@ -5,7 +5,7 @@ import { setLogFn, setVerbose, log, sleep, getPinnedTasks } from "./utils.js";
 import type { PinnedTask } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
-import { runCycle, checkBalance, InsufficientFundsError } from "./main.js";
+import { runCycle, checkBalance, InsufficientFundsError, getTaskStats } from "./main.js";
 import { getLlmStats } from "./llm.js";
 import { resetAccount } from "./identity.js";
 
@@ -29,6 +29,7 @@ export default function BotScreen() {
   const [nextPollAt, setNextPollAt] = useState<number | null>(null);
   const [countdown, setCountdown] = useState<string | null>(null);
   const [llmActive, setLlmActive] = useState(0);
+  const [done, setDone] = useState({ answering: 0, judging: 0 });
   const [tasks, setTasks] = useState<PinnedTask[]>([]);
   const { stdout } = useStdout();
 
@@ -86,6 +87,7 @@ export default function BotScreen() {
     const id = setInterval(() => {
       const s = getLlmStats();
       setLlmActive(s.active);
+      setDone(getTaskStats());
       setTasks(getPinnedTasks());
     }, 1000);
     return () => clearInterval(id);
@@ -182,6 +184,7 @@ export default function BotScreen() {
           <Text dimColor>  ·  LLM {llmActive}/{getConfig().llm_concurrency}</Text>
           {countdown && <Text dimColor>  ·  next poll in {countdown}</Text>}
         </Text>
+        <Text dimColor>Answered: {done.answering}  ·  Judged: {done.judging}</Text>
       </Box>
       {tasks.length > 0 && (
         <Box flexDirection="column">

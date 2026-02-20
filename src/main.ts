@@ -46,10 +46,20 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
 // Track in-flight task IDs to avoid duplicates across cycles
 const inFlight = new Set<string>();
 
+const taskStats = { answering: 0, judging: 0 };
+
+export function getTaskStats() {
+  return { ...taskStats };
+}
+
 function launchTask(id: string, label: string, fn: () => Promise<void>): void {
   if (inFlight.has(id)) return;
   inFlight.add(id);
   fn()
+    .then(() => {
+      if (label === "answering") taskStats.answering++;
+      else if (label === "judging") taskStats.judging++;
+    })
     .catch((err) => log(`[${id.slice(0, 8)}] Error ${label}: ${err}`))
     .finally(() => inFlight.delete(id));
 }

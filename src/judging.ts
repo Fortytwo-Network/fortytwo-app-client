@@ -150,7 +150,7 @@ export async function judgeChallenge(
       async (answer, i): Promise<[Answer, boolean]> => {
         const content = answer.decrypted_content ?? "";
         if (!content) return [answer, false];
-        const isGood = await llm.evaluateGoodEnough(problem, content, RANKING_LLM_RETRIES);
+        const isGood = await llm.evaluateGoodEnough(problem, content, RANKING_LLM_RETRIES, AbortSignal.timeout(60_000));
         evalDone++;
         const verdict = isGood ? "good" : "bad";
         log(`[${tag}] Eval ${evalDone}/${evalTotal} → ${verdict}`);
@@ -192,6 +192,7 @@ export async function judgeChallenge(
             goodAnswers[aIdx].decrypted_content!,
             goodAnswers[bIdx].decrypted_content!,
             RANKING_LLM_RETRIES,
+            AbortSignal.timeout(60_000),
           );
           cmpDone++;
           const winner = result === "A" ? `#${aIdx + 1} wins` : result === "B" ? `#${bIdx + 1} wins` : result === "U" ? "tie" : "skip";
