@@ -116,7 +116,7 @@ function getClient(): OpenAI {
     maxRetries: 2,
     defaultHeaders: isLocal ? undefined : {
       "HTTP-Referer": "https://app.fortytwo.network",
-      "X-Title": "fortytwo.network",
+      "X-Title": "Fortytwo",
       "X-Timeout": String(cfg.llm_timeout),
     },
   });
