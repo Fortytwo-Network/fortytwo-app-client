@@ -6,10 +6,20 @@ import { setLogFn, setVerbose, log, sleep, getPinnedTasks } from "./utils.js";
 import type { PinnedTask } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
-import { runCycle, checkBalance, InsufficientFundsError, getTaskStats } from "./main.js";
+import { runCycle, checkBalance, InsufficientFundsError } from "./main.js";
 import { getLlmStats } from "./llm.js";
 import { resetAccount } from "./identity.js";
 import { executeCommand, SUGGESTIONS } from "./commands.js";
+
+type AgentStats = {
+  queries: number;
+  queriesCompleted: number;
+  answers: number;
+  answersWon: number;
+  winRate: number;
+  judgments: number;
+  accuracy: number;
+};
 
 const COLOR = "rgb(42, 42, 242)";
 const MAX_LINES = 200;
@@ -32,7 +42,7 @@ export default function BotScreen() {
   const [nextPollAt, setNextPollAt] = useState<number | null>(null);
   const [countdown, setCountdown] = useState<string | null>(null);
   const [llmActive, setLlmActive] = useState(0);
-  const [done, setDone] = useState({ answering: 0, judging: 0 });
+  const [stats, setStats] = useState<AgentStats | null>(null);
   const [tasks, setTasks] = useState<PinnedTask[]>([]);
   const { stdout } = useStdout();
 
@@ -49,9 +59,32 @@ export default function BotScreen() {
   const [client, setClient] = useState<FortyTwoClient | null>(null);
 
   const handleCommand = useCallback((input: string) => {
-    const results = executeCommand(input);
+    const raw = input.trim();
+    if (!raw) return;
+
+    const stripped = raw.startsWith("/") ? raw.slice(1) : raw;
+
+    if (stripped.startsWith("ask ") || stripped === "ask") {
+      const question = stripped.slice(4).trim();
+      if (!question) {
+        pushLine("Usage: /ask <question>");
+        return;
+      }
+      if (!client) {
+        pushLine("Not connected yet, wait for login.");
+        return;
+      }
+      pushLine(`Submitting question...`);
+      const encrypted = Buffer.from(question, "utf-8").toString("base64");
+      client.createQuery(encrypted, "general")
+        .then((res) => pushLine(`Question submitted! ID: ${res.id ?? "?"}`))
+        .catch((err) => pushLine(`Error: ${err}`));
+      return;
+    }
+
+    const results = executeCommand(raw);
     for (const line of results) pushLine(line);
-  }, [pushLine]);
+  }, [pushLine, client]);
 
   // Countdown ticker — updates every second
   useEffect(() => {
@@ -73,15 +106,30 @@ export default function BotScreen() {
     return () => clearInterval(id);
   }, [nextPollAt]);
 
-  // Balance ticker — every 30s, independent of main cycle
+  // Balance + stats ticker — every 30s, independent of main cycle
   useEffect(() => {
     if (!client) return;
     let cancelled = false;
 
     const tick = async () => {
       try {
-        const available = await checkBalance(client);
-        if (!cancelled) setBalance(available);
+        const [available, raw] = await Promise.all([
+          checkBalance(client),
+          client.getAgentStats().catch(() => null),
+        ]);
+        if (cancelled) return;
+        setBalance(available);
+        if (raw) {
+          setStats({
+            queries: raw.queries_submitted ?? 0,
+            queriesCompleted: raw.queries_completed ?? 0,
+            answers: raw.answers_submitted ?? 0,
+            answersWon: raw.answers_won ?? 0,
+            winRate: parseFloat(raw.answer_win_rate ?? "0"),
+            judgments: raw.judgments_made ?? 0,
+            accuracy: parseFloat(raw.judgment_accuracy ?? "0"),
+          });
+        }
       } catch { /* ignore */ }
     };
 
@@ -93,9 +141,7 @@ export default function BotScreen() {
   // LLM stats + pinned tasks ticker — every 1s
   useEffect(() => {
     const id = setInterval(() => {
-      const s = getLlmStats();
-      setLlmActive(s.active);
-      setDone(getTaskStats());
+      setLlmActive(getLlmStats().active);
       setTasks(getPinnedTasks());
     }, 1000);
     return () => clearInterval(id);
@@ -192,7 +238,9 @@ export default function BotScreen() {
           <Text dimColor>  ·  LLM {llmActive}/{getConfig().llm_concurrency}</Text>
           {countdown && <Text dimColor>  ·  next poll in {countdown}</Text>}
         </Text>
-        <Text dimColor>Answered: {done.answering}  ·  Judged: {done.judging}</Text>
+        {stats
+          ? <Text dimColor>Q: {stats.queries} ({stats.queriesCompleted} done)  ·  A: {stats.answers} ({stats.answersWon} wins)  ·  J: {stats.judgments}</Text>
+          : <Text dimColor>loading stats...</Text>}
       </Box>
 
       <Box flexDirection="column" height={MAX_PINNED_LINES}>

@@ -30,6 +30,7 @@ const CONFIG_KEYS = [
 
 export const SUGGESTIONS = [
   "/help",
+  "/ask ",
   "/identity",
   "/config show",
   ...CONFIG_KEYS.map((k) => `/config set ${k} `),
@@ -50,6 +51,7 @@ export function executeCommand(input: string): string[] {
   if (cmd === "help") {
     return [
       "Commands:",
+      "  /ask <question>    — submit a question to the network",
       "  /identity          — show agent_id and secret",
       "  /config show       — show all config values",
       "  /config set <k> <v> — change a config value",

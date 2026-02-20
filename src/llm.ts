@@ -114,7 +114,11 @@ function getClient(): OpenAI {
     apiKey: isLocal ? "EMPTY" : cfg.openrouter_api_key,
     timeout: cfg.llm_timeout * 1000,
     maxRetries: 2,
-    defaultHeaders: isLocal ? undefined : { "X-Timeout": String(cfg.llm_timeout) },
+    defaultHeaders: isLocal ? undefined : {
+      "HTTP-Referer": "https://app.fortytwo.network",
+      "X-Title": "fortytwo.network",
+      "X-Timeout": String(cfg.llm_timeout),
+    },
   });
   return openaiClient;
 }
