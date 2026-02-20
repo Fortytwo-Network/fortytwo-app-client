@@ -2,48 +2,16 @@ import { createHash } from "node:crypto";
 import * as config from "./config.js";
 import { sleep, secondsUntilDeadline, setVerbose, log } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
-import { loadIdentity, registerAgent, resetAccount } from "./identity.js";
+import { loadIdentity, resetAccount } from "./identity.js";
 import { judgeChallenge } from "./judging.js";
 import { answerQuery } from "./answering.js";
+import { isLlmBusy } from "./llm.js";
 
 export class InsufficientFundsError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "InsufficientFundsError";
   }
-}
-
-export interface BotArgs {
-  identity?: string;
-  register?: boolean;
-  displayName?: string;
-  once?: boolean;
-  verbose?: boolean;
-}
-
-export function parseArgs(argv: string[] = process.argv.slice(2)): BotArgs {
-  const args: BotArgs = {};
-  for (let i = 0; i < argv.length; i++) {
-    switch (argv[i]) {
-      case "--identity":
-        args.identity = argv[++i];
-        break;
-      case "--register":
-        args.register = true;
-        break;
-      case "--display-name":
-        args.displayName = argv[++i];
-        break;
-      case "--once":
-        args.once = true;
-        break;
-      case "--verbose":
-      case "-v":
-        args.verbose = true;
-        break;
-    }
-  }
-  return args;
 }
 
 function shouldAnswer(queryId: string, agentId: string): boolean {
@@ -78,10 +46,6 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
 // Track in-flight task IDs to avoid duplicates across cycles
 const inFlight = new Set<string>();
 
-export function getInFlightCount(): number {
-  return inFlight.size;
-}
-
 function launchTask(id: string, label: string, fn: () => Promise<void>): void {
   if (inFlight.has(id)) return;
   inFlight.add(id);
@@ -91,6 +55,11 @@ function launchTask(id: string, label: string, fn: () => Promise<void>): void {
 }
 
 export async function processChallenges(client: FortyTwoClient, dualMode = false): Promise<number> {
+  if (isLlmBusy()) {
+    log(`LLM queue busy, skipping challenge pickup`);
+    return 0;
+  }
+
   const pending = await client.getPendingChallenges(1, 50);
   const challenges = (pending.challenges ?? []) as Record<string, any>[];
 
@@ -181,11 +150,11 @@ export async function runCycle(client: FortyTwoClient): Promise<number> {
   return total;
 }
 
-export async function main(args?: BotArgs): Promise<void> {
+export async function main(): Promise<void> {
   const cfg = config.get();
-  const opts = args ?? parseArgs();
-  if (opts.verbose) setVerbose(true);
-  const identityPath = opts.identity ?? cfg.identity_file;
+  if (process.argv.includes("--verbose") || process.argv.includes("-v")) {
+    setVerbose(true);
+  }
 
   if (cfg.inference_type !== "local" && !cfg.openrouter_api_key) {
     log("OPENROUTER_API_KEY not set. Run onboarding first.");
@@ -203,26 +172,14 @@ export async function main(args?: BotArgs): Promise<void> {
   const client = new FortyTwoClient();
 
   try {
-    let identity = opts.register ? null : loadIdentity(identityPath);
+    const identity = loadIdentity(cfg.identity_file);
 
     if (!identity) {
-      log("No identity found, starting registration...");
-      identity = await registerAgent(client, opts.displayName ?? "JudgeBot");
-      log(`Registration complete! Agent ID: ${identity.agent_id}`);
+      log("No identity found. Run onboarding first.");
+      process.exit(1);
     }
 
     await client.login(identity.agent_id, identity.secret);
-
-    if (opts.once) {
-      const available = await checkBalance(client);
-      if (available < cfg.min_balance) {
-        log(`Balance ${available.toFixed(2)} FOR is below minimum ${cfg.min_balance.toFixed(2)} FOR`);
-        return;
-      }
-      const count = await runCycle(client);
-      log(`Processed ${count} items. Exiting.`);
-      return;
-    }
 
     log(`Starting polling loop (interval: ${cfg.poll_interval}s)`);
     while (true) {

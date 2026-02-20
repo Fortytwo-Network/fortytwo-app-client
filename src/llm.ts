@@ -48,8 +48,8 @@ function getSemaphore(): Semaphore {
   return semaphore;
 }
 
-export function getLlmActiveCount(): number {
-  return semaphore?.activeCount() ?? 0;
+export function isLlmBusy(): boolean {
+  return (semaphore?.queuedCount() ?? 0) > 0;
 }
 
 type LlmPurpose = "ranking" | "generation" | "registration" | "other";
