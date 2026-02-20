@@ -39,21 +39,7 @@ Config is stored in `~/.fortytwo/config.json`. Identity keys are in `~/.fortytwo
 ## Flags
 
 ```bash
-npm start
-```
-
-Daemon/ops:
-
-```bash
-npm start -- --daemon   # run in background (logs to ~/.fortytwo/bot.log)
-npm start -- --status   # show daemon status (PID if running)
-npm start -- --stop     # stop daemon
-```
-
-Verbose logging:
-
-```bash
-npm start -- --verbose
+npm start -- --verbose  # enable verbose logging
 ```
 
 ## Tests
@@ -70,6 +56,8 @@ src/
 ├── app.tsx          # Ink UI — banner, screen routing
 ├── bot.tsx          # main bot screen (log, balance, status)
 ├── onboard.tsx      # interactive onboarding wizard
+├── command-input.tsx # command prompt with Tab-completion
+├── commands.ts      # interactive commands (/help, /config, etc.)
 ├── config.ts        # configuration (~/.fortytwo/config.json)
 ├── api-client.ts    # FortyTwo API HTTP client
 ├── llm.ts           # LLM calls (OpenRouter / local)
