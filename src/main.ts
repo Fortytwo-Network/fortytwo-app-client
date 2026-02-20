@@ -75,6 +75,21 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
   }
 }
 
+// Track in-flight task IDs to avoid duplicates across cycles
+const inFlight = new Set<string>();
+
+export function getInFlightCount(): number {
+  return inFlight.size;
+}
+
+function launchTask(id: string, label: string, fn: () => Promise<void>): void {
+  if (inFlight.has(id)) return;
+  inFlight.add(id);
+  fn()
+    .catch((err) => log(`[${id.slice(0, 8)}] Error ${label}: ${err}`))
+    .finally(() => inFlight.delete(id));
+}
+
 export async function processChallenges(client: FortyTwoClient, dualMode = false): Promise<number> {
   const pending = await client.getPendingChallenges(1, 50);
   const challenges = (pending.challenges ?? []) as Record<string, any>[];
@@ -86,6 +101,7 @@ export async function processChallenges(client: FortyTwoClient, dualMode = false
 
   const eligible = challenges.filter((ch) => {
     if (ch.has_voted) return false;
+    if (inFlight.has(String(ch.id))) return false;
     const queryId = String(ch.query_id ?? "");
     if (dualMode && queryId && shouldAnswer(queryId, client.agentId)) return false;
     const effectiveDeadline = (ch.effective_voting_deadline ?? ch.judging_deadline_at ?? "") as string;
@@ -97,28 +113,19 @@ export async function processChallenges(client: FortyTwoClient, dualMode = false
     return true;
   });
 
-  log(`Found ${challenges.length} pending challenges (${eligible.length} eligible)`);
+  log(`Found ${challenges.length} pending challenges (${eligible.length} eligible, ${inFlight.size} in-flight)`);
 
-  const results = await Promise.allSettled(
-    eligible.map(async (ch) => {
-      const challengeId = String(ch.id);
-      const effectiveDeadline = (ch.effective_voting_deadline ?? ch.judging_deadline_at ?? "") as string;
-      const remaining = secondsUntilDeadline(effectiveDeadline);
-      const answerCount = (ch.answer_count ?? 0) as number;
-      await judgeChallenge(client, challengeId, remaining, answerCount);
-    }),
-  );
-
-  let processed = 0;
-  for (const [i, r] of results.entries()) {
-    if (r.status === "fulfilled") {
-      processed++;
-    } else {
-      log(`[${String(eligible[i].id).slice(0, 8)}] Error judging: ${r.reason}`);
-    }
+  for (const ch of eligible) {
+    const challengeId = String(ch.id);
+    const effectiveDeadline = (ch.effective_voting_deadline ?? ch.judging_deadline_at ?? "") as string;
+    const remaining = secondsUntilDeadline(effectiveDeadline);
+    const answerCount = (ch.answer_count ?? 0) as number;
+    launchTask(challengeId, "judging", () =>
+      judgeChallenge(client, challengeId, remaining, answerCount),
+    );
   }
 
-  return processed;
+  return eligible.length;
 }
 
 export async function processQueries(client: FortyTwoClient, dualMode = false): Promise<number> {
@@ -132,6 +139,7 @@ export async function processQueries(client: FortyTwoClient, dualMode = false): 
 
   const eligible = queries.filter((q) => {
     const queryId = String(q.id);
+    if (inFlight.has(queryId)) return false;
     if (dualMode && !shouldAnswer(queryId, client.agentId)) return false;
     const createdAtStr = (q.created_at ?? "") as string;
     const decisionDeadlineStr = (q.decision_deadline_at ?? "") as string;
@@ -140,24 +148,15 @@ export async function processQueries(client: FortyTwoClient, dualMode = false): 
     return true;
   });
 
-  log(`Found ${queries.length} active queries (${eligible.length} eligible)`);
+  log(`Found ${queries.length} active queries (${eligible.length} eligible, ${inFlight.size} in-flight)`);
 
-  const results = await Promise.allSettled(
-    eligible.map(async (q) => {
-      await answerQuery(client, String(q.id));
-    }),
-  );
-
-  let processed = 0;
-  for (const [i, r] of results.entries()) {
-    if (r.status === "fulfilled") {
-      processed++;
-    } else {
-      log(`[${String(eligible[i].id).slice(0, 8)}] Error answering: ${r.reason}`);
-    }
+  for (const q of eligible) {
+    launchTask(String(q.id), "answering", () =>
+      answerQuery(client, String(q.id)),
+    );
   }
 
-  return processed;
+  return eligible.length;
 }
 
 export async function runCycle(client: FortyTwoClient): Promise<number> {

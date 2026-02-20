@@ -22,10 +22,10 @@ describe("config", () => {
     expect(cfg.openrouter_api_key).toBe("");
     expect(cfg.llm_api_base).toBe("");
     expect(cfg.fortytwo_api_base).toBe("https://app.fortytwo.network/api");
-    expect(cfg.poll_interval).toBe(600);
+    expect(cfg.poll_interval).toBe(120);
     expect(cfg.llm_model).toBe("z-ai/glm-4.7-flash");
     expect(cfg.llm_concurrency).toBe(40);
-    expect(cfg.llm_timeout).toBe(60);
+    expect(cfg.llm_timeout).toBe(120);
     expect(cfg.min_balance).toBe(5.0);
     expect(cfg.bot_role).toBe("JUDGE");
     expect(cfg.answerer_system_prompt).toBe("You are a helpful assistant.");

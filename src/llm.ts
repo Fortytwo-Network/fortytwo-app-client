@@ -1,5 +1,7 @@
+import OpenAI from "openai";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import * as config from "./config.js";
-import { sleep, parseLastLetter, verbose } from "./utils.js";
+import { parseLastLetter, verbose } from "./utils.js";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
@@ -28,6 +30,14 @@ class Semaphore {
     const next = this.queue.shift();
     if (next) next();
   }
+
+  activeCount(): number {
+    return this.current;
+  }
+
+  queuedCount(): number {
+    return this.queue.length;
+  }
 }
 
 let semaphore: Semaphore | null = null;
@@ -38,24 +48,78 @@ function getSemaphore(): Semaphore {
   return semaphore;
 }
 
-interface ChatMessage {
-  role: string;
-  content: string;
+export function getLlmActiveCount(): number {
+  return semaphore?.activeCount() ?? 0;
 }
 
-function getCompletionsUrl(): string {
-  const cfg = config.get();
-  if (cfg.inference_type === "local") {
-    const base = cfg.llm_api_base.replace(/\/+$/, "");
-    return `${base}/chat/completions`;
+type LlmPurpose = "ranking" | "generation" | "registration" | "other";
+
+const stats = {
+  calls: 0,
+  errors: 0,
+  ranking: { count: 0, totalMs: 0, errors: 0 },
+  generation: { count: 0, totalMs: 0, errors: 0 },
+};
+
+function recordSuccess(purpose: LlmPurpose, ms: number) {
+  stats.calls++;
+  if (purpose === "ranking") {
+    stats.ranking.count++;
+    stats.ranking.totalMs += ms;
+  } else if (purpose === "generation") {
+    stats.generation.count++;
+    stats.generation.totalMs += ms;
   }
-  return `${OPENROUTER_BASE}/chat/completions`;
+}
+
+function recordError(purpose: LlmPurpose) {
+  stats.calls++;
+  stats.errors++;
+  if (purpose === "ranking") stats.ranking.errors++;
+  if (purpose === "generation") stats.generation.errors++;
+}
+
+export function getLlmStats() {
+  const active = semaphore?.activeCount() ?? 0;
+  const queued = semaphore?.queuedCount() ?? 0;
+  const rankingAvg = stats.ranking.count > 0
+    ? Math.round(stats.ranking.totalMs / stats.ranking.count)
+    : null;
+  const generationAvg = stats.generation.count > 0
+    ? Math.round(stats.generation.totalMs / stats.generation.count)
+    : null;
+  return {
+    active,
+    queued,
+    calls: stats.calls,
+    errors: stats.errors,
+    rankingAvgMs: rankingAvg,
+    generationAvgMs: generationAvg,
+  };
+}
+
+let openaiClient: OpenAI | null = null;
+
+function getClient(): OpenAI {
+  if (openaiClient) return openaiClient;
+  const cfg = config.get();
+  const isLocal = cfg.inference_type === "local";
+  openaiClient = new OpenAI({
+    baseURL: isLocal ? cfg.llm_api_base.replace(/\/+$/, "") : OPENROUTER_BASE,
+    apiKey: isLocal ? "EMPTY" : cfg.openrouter_api_key,
+    timeout: cfg.llm_timeout * 1000,
+    maxRetries: 2,
+    defaultHeaders: isLocal ? undefined : { "X-Timeout": String(cfg.llm_timeout) },
+  });
+  return openaiClient;
 }
 
 async function callLlmApi(
-  messages: ChatMessage[],
+  messages: ChatCompletionMessageParam[],
   retries = 2,
   temperature = 0.3,
+  signal?: AbortSignal,
+  purpose: LlmPurpose = "other",
 ): Promise<string> {
   const cfg = config.get();
   const isLocal = cfg.inference_type === "local";
@@ -64,94 +128,56 @@ async function callLlmApi(
     throw new Error("OPENROUTER_API_KEY is not set");
   }
 
-  const url = getCompletionsUrl();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (isLocal) {
-    headers["Authorization"] = "Bearer EMPTY";
-  } else {
-    headers["Authorization"] = `Bearer ${cfg.openrouter_api_key}`;
-    headers["X-Timeout"] = String(cfg.llm_timeout);
-  }
-
-  const payload = {
-    model: cfg.llm_model,
-    messages,
-    temperature,
-  };
-
+  const client = getClient();
   const sem = getSemaphore();
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    await sem.acquire();
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), cfg.llm_timeout * 1000);
+  await sem.acquire();
+  const start = Date.now();
+  try {
+    if (signal?.aborted) throw new Error("LLM call aborted");
 
-      verbose(`→ POST ${url} model=${cfg.llm_model} msgs=${messages.length} temp=${temperature}`);
+    verbose(`→ model=${cfg.llm_model} msgs=${messages.length} temp=${temperature}`);
 
-      let resp: Response;
-      try {
-        resp = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+    const resp = await client.chat.completions.create(
+      {
+        model: cfg.llm_model,
+        messages,
+        temperature,
+      },
+      {
+        signal: signal ?? undefined,
+        maxRetries: retries,
+      },
+    );
 
-      verbose(`← ${resp.status} POST ${url}`);
-
-      if (resp.status === 429) {
-        verbose(`  rate-limited, backing off attempt ${attempt}`);
-        const wait = Math.min(2 ** attempt * 2, 30) * 1000;
-        await sleep(wait);
-        continue;
-      }
-
-      if (!resp.ok) {
-        const text = await resp.text();
-        verbose(`  error body: ${text.slice(0, 200)}`);
-        throw new Error(`LLM API error ${resp.status}: ${text.slice(0, 300)}`);
-      }
-
-      const data = (await resp.json()) as any;
-      const content = (data.choices[0].message.content as string).trim();
-      verbose(`  response: ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
-      return content;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        if (attempt >= retries) {
-          throw new Error(`LLM call timed out after ${retries + 1} attempts`);
-        }
-        continue;
-      }
-      if (attempt < retries) {
-        const wait = 2 ** attempt * 1000;
-        await sleep(wait);
-        continue;
-      }
-      throw new Error(`LLM call failed after ${retries + 1} attempts: ${err}`);
-    } finally {
-      sem.release();
-    }
+    const content = (resp.choices[0].message.content ?? "").trim();
+    verbose(`← ${cfg.llm_model} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
+    recordSuccess(purpose, Date.now() - start);
+    return content;
+  } catch (err) {
+    verbose(`✗ failed after ${Date.now() - start}ms: ${err}`);
+    recordError(purpose);
+    if (signal?.aborted) throw new Error("LLM call aborted");
+    throw err;
+  } finally {
+    sem.release();
   }
-
-  throw new Error("LLM call exhausted retries");
 }
 
-export async function callLlm(prompt: string, retries = 2): Promise<string> {
-  return callLlmApi([{ role: "user", content: prompt }], retries, 0.3);
+export async function callLlm(
+  prompt: string,
+  retries = 2,
+  signal?: AbortSignal,
+  purpose: LlmPurpose = "other",
+): Promise<string> {
+  return callLlmApi([{ role: "user", content: prompt }], retries, 0.3, signal, purpose);
 }
 
 export async function compareForRegistration(
   question: string,
   optionA: string,
   optionB: string,
+  signal?: AbortSignal,
 ): Promise<number> {
   const prompt =
     `######Problem######: \n${question}\n` +
@@ -168,7 +194,7 @@ export async function compareForRegistration(
 
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await callLlm(prompt);
+      const response = await callLlm(prompt, 2, signal, "registration");
       const letter = parseLastLetter(response, new Set(["A", "B", "U"]));
       if (letter !== null) {
         if (letter === "A") return 1;
@@ -187,6 +213,7 @@ export async function evaluateGoodEnough(
   problem: string,
   solution: string,
   retries = 2,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const prompt =
     `######Problem######:\n${problem}\n` +
@@ -202,7 +229,7 @@ export async function evaluateGoodEnough(
     `######Evaluation######:`;
 
   try {
-    const response = await callLlm(prompt, retries);
+    const response = await callLlm(prompt, retries, signal, "ranking");
     const letter = parseLastLetter(response, new Set(["GOOD", "BAD"]));
     if (letter === "BAD") return false;
     return true;
@@ -216,6 +243,7 @@ export async function comparePairwise(
   solutionA: string,
   solutionB: string,
   retries = 2,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const prompt =
     `######Problem######: \n${problem}\n` +
@@ -232,7 +260,7 @@ export async function comparePairwise(
 
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await callLlm(prompt, retries);
+      const response = await callLlm(prompt, retries, signal, "ranking");
       const letter = parseLastLetter(response, new Set(["A", "B", "U"]));
       if (letter !== null) return letter;
     }
@@ -247,6 +275,7 @@ export async function generateAnswer(
   systemPrompt: string,
   problem: string,
   retries = 2,
+  signal?: AbortSignal,
 ): Promise<string> {
   return callLlmApi(
     [
@@ -255,5 +284,7 @@ export async function generateAnswer(
     ],
     retries,
     0.7,
+    signal,
+    "generation",
   );
 }

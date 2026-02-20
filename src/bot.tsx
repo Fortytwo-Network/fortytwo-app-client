@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useStdout } from "ink";
 import { get as getConfig } from "./config.js";
-import { setLogFn, log } from "./utils.js";
+import { setLogFn, setVerbose, log, sleep, getPinnedTasks } from "./utils.js";
+import type { PinnedTask } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
 import { runCycle, checkBalance, InsufficientFundsError } from "./main.js";
+import { getLlmStats } from "./llm.js";
 import { resetAccount } from "./identity.js";
-import { sleep } from "./utils.js";
 
 const COLOR = "rgb(42, 42, 242)";
 const MAX_LINES = 200;
@@ -27,6 +28,8 @@ export default function BotScreen() {
   const [balance, setBalance] = useState<number | null>(null);
   const [nextPollAt, setNextPollAt] = useState<number | null>(null);
   const [countdown, setCountdown] = useState<string | null>(null);
+  const [llmActive, setLlmActive] = useState(0);
+  const [tasks, setTasks] = useState<PinnedTask[]>([]);
   const { stdout } = useStdout();
 
   const termRows = stdout.rows ?? 24;
@@ -78,9 +81,22 @@ export default function BotScreen() {
     return () => { cancelled = true; clearInterval(id); };
   }, [client]);
 
+  // LLM stats + pinned tasks ticker — every 1s
+  useEffect(() => {
+    const id = setInterval(() => {
+      const s = getLlmStats();
+      setLlmActive(s.active);
+      setTasks(getPinnedTasks());
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
   // Main bot loop
   useEffect(() => {
     setLogFn(pushLine);
+    if (process.argv.includes("--verbose") || process.argv.includes("-v")) {
+      setVerbose(true);
+    }
 
     let cancelled = false;
 
@@ -163,9 +179,19 @@ export default function BotScreen() {
             ? <Text color={balanceColor} bold>{balance.toFixed(2)} FOR</Text>
             : <Text dimColor>loading...</Text>}
           <Text dimColor>  ·  {getConfig().llm_model}</Text>
+          <Text dimColor>  ·  LLM {llmActive}/{getConfig().llm_concurrency}</Text>
           {countdown && <Text dimColor>  ·  next poll in {countdown}</Text>}
         </Text>
       </Box>
+      {tasks.length > 0 && (
+        <Box flexDirection="column">
+          {tasks.map((t) => (
+            <Text key={t.id} color="cyan">
+              ● {t.label} ({formatCountdown(Date.now() - t.startedAt)})
+            </Text>
+          ))}
+        </Box>
+      )}
       <Text dimColor>{"─".repeat(Math.min(stdout.columns ?? 72, 72))}</Text>
 
       <Box flexDirection="column" height={visibleCount}>

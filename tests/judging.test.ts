@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../src/config.js", () => ({
   get: () => ({
-    llm_timeout: 60,
+    llm_timeout: 120,
     llm_concurrency: 20,
   }),
   BT_MAX_ITERATIONS: 1000,

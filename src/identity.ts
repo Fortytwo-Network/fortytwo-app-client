@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import * as config from "./config.js";
-import { sleep } from "./utils.js";
+import { sleep, mapWithConcurrency } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import * as llm from "./llm.js";
 
@@ -55,26 +55,24 @@ interface ChallengeResponse {
 async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<ChallengeResponse[]> {
   const total = challenges.length;
   let solved = 0;
+  const concurrency = config.get().llm_concurrency;
 
   // Phase 1: Run forward (a,b) + inverse (b,a) concurrently for all challenges
   // Per-challenge timeout to avoid hanging on a single slow LLM call
   const CHALLENGE_TIMEOUT = 120_000; // 2 min per challenge
 
-  const pairResults = await Promise.all(
-    challenges.map(async (ch, idx): Promise<[number, Challenge, number]> => {
+  const pairResults = await mapWithConcurrency(
+    challenges,
+    concurrency,
+    async (ch, idx): Promise<[number, Challenge, number]> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CHALLENGE_TIMEOUT);
       try {
-        const result = await Promise.race([
-          (async () => {
-            const [forward, inverse] = await Promise.all([
-              llm.compareForRegistration(ch.question, ch.option_a, ch.option_b),
-              llm.compareForRegistration(ch.question, ch.option_b, ch.option_a),
-            ]);
-            return forward + -inverse;
-          })(),
-          new Promise<number>((_, reject) =>
-            setTimeout(() => reject(new Error("timeout")), CHALLENGE_TIMEOUT),
-          ),
+        const [forward, inverse] = await Promise.all([
+          llm.compareForRegistration(ch.question, ch.option_a, ch.option_b, controller.signal),
+          llm.compareForRegistration(ch.question, ch.option_b, ch.option_a, controller.signal),
         ]);
+        const result = forward + -inverse;
         solved++;
         log(`~Solving: ${solved}/${total}`);
         return [idx, ch, result];
@@ -82,8 +80,10 @@ async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<Cha
         solved++;
         log(`~Solving: ${solved}/${total} (${idx + 1} timed out)`);
         return [idx, ch, 0]; // tie on timeout → will go to tiebreak or random
+      } finally {
+        clearTimeout(timeout);
       }
-    }),
+    },
   );
 
   // Collect resolved and unresolved

@@ -1,5 +1,5 @@
 import * as config from "./config.js";
-import { log } from "./utils.js";
+import { log, mapWithConcurrency, pinTask, unpinTask } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import * as llm from "./llm.js";
 
@@ -95,6 +95,7 @@ export async function judgeChallenge(
   answerCountHint = 0,
 ): Promise<void> {
   const tag = challengeId.slice(0, 8);
+  const concurrency = config.get().llm_concurrency;
 
   // Step 0: Pre-join time budget check
   if (answerCountHint > 0) {
@@ -134,92 +135,101 @@ export async function judgeChallenge(
   if (answers.length === 0) throw new Error(`No answers for challenge ${challengeId}`);
 
   log(`[${tag}] Got ${answers.length} answers, evaluating quality...`);
+  pinTask(challengeId, `Judging ${tag}`);
 
-  // Step 4: Evaluate all answers for "good enough" concurrently
-  let evalDone = 0;
-  const evalTotal = answers.length;
-  const goodAnswers: Answer[] = [];
-  const badAnswers: Answer[] = [];
+  try {
+    // Step 4: Evaluate all answers for "good enough" concurrently
+    let evalDone = 0;
+    const evalTotal = answers.length;
+    const goodAnswers: Answer[] = [];
+    const badAnswers: Answer[] = [];
 
-  const evalResults = await Promise.all(
-    answers.map(async (answer, i): Promise<[Answer, boolean]> => {
-      const content = answer.decrypted_content ?? "";
-      if (!content) return [answer, false];
-      const isGood = await llm.evaluateGoodEnough(problem, content, RANKING_LLM_RETRIES);
-      evalDone++;
-      const verdict = isGood ? "good" : "bad";
-      log(`[${tag}] Eval ${evalDone}/${evalTotal} → ${verdict}`);
-      return [answer, isGood];
-    }),
-  );
-
-  for (const [answer, isGood] of evalResults) {
-    if (isGood) goodAnswers.push(answer);
-    else badAnswers.push(answer);
-  }
-
-  log(`[${tag}] Quality: ${goodAnswers.length} good, ${badAnswers.length} bad`);
-
-  let answerRankings: string[];
-  let goodAnswerIds: string[];
-
-  // Step 5: Build ranking
-  if (goodAnswers.length <= 1) {
-    const rankedGoodIds = goodAnswers.map((a) => a.id);
-    const rankedBadIds = badAnswers.map((a) => a.id);
-    answerRankings = [...rankedGoodIds, ...rankedBadIds];
-    goodAnswerIds = rankedGoodIds;
-  } else {
-    const n = goodAnswers.length;
-    const wins: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
-    const pairs = buildPairwisePairs(n);
-
-    log(`[${tag}] Running ${pairs.length} pairwise comparisons...`);
-
-    let cmpDone = 0;
-    const cmpTotal = pairs.length;
-    const compareResults = await Promise.all(
-      pairs.map(async ([aIdx, bIdx]): Promise<[number, number, string | null]> => {
-        const result = await llm.comparePairwise(
-          problem,
-          goodAnswers[aIdx].decrypted_content!,
-          goodAnswers[bIdx].decrypted_content!,
-          RANKING_LLM_RETRIES,
-        );
-        cmpDone++;
-        const winner = result === "A" ? `#${aIdx + 1} wins` : result === "B" ? `#${bIdx + 1} wins` : result === "U" ? "tie" : "skip";
-        log(`[${tag}] Compare ${cmpDone}/${cmpTotal} (#${aIdx + 1} vs #${bIdx + 1}) → ${winner}`);
-        return [aIdx, bIdx, result];
-      }),
+    const evalResults = await mapWithConcurrency(
+      answers,
+      concurrency,
+      async (answer, i): Promise<[Answer, boolean]> => {
+        const content = answer.decrypted_content ?? "";
+        if (!content) return [answer, false];
+        const isGood = await llm.evaluateGoodEnough(problem, content, RANKING_LLM_RETRIES);
+        evalDone++;
+        const verdict = isGood ? "good" : "bad";
+        log(`[${tag}] Eval ${evalDone}/${evalTotal} → ${verdict}`);
+        return [answer, isGood];
+      },
     );
 
-    for (const [aIdx, bIdx, result] of compareResults) {
-      if (result === null) continue;
-      if (result === "A") wins[aIdx][bIdx] += 1;
-      else if (result === "B") wins[bIdx][aIdx] += 1;
-      else if (result === "U") {
-        wins[aIdx][bIdx] += 0.5;
-        wins[bIdx][aIdx] += 0.5;
-      }
+    for (const [answer, isGood] of evalResults) {
+      if (isGood) goodAnswers.push(answer);
+      else badAnswers.push(answer);
     }
 
-    // Step 6: Run local Bradley-Terry
-    const strengths = computeBradleyTerry(wins);
-    const indexed = strengths
-      .map((s, i) => ({ idx: i, strength: s }))
-      .sort((a, b) => b.strength - a.strength);
+    log(`[${tag}] Quality: ${goodAnswers.length} good, ${badAnswers.length} bad`);
 
-    const ranking = indexed.map((x) => `#${x.idx + 1}:${x.strength.toFixed(2)}`).join(" > ");
-    log(`[${tag}] BT ranking: ${ranking}`);
+    let answerRankings: string[];
+    let goodAnswerIds: string[];
 
-    const rankedGoodIds = indexed.map((x) => goodAnswers[x.idx].id);
-    const rankedBadIds = badAnswers.map((a) => a.id);
-    answerRankings = [...rankedGoodIds, ...rankedBadIds];
-    goodAnswerIds = goodAnswers.map((a) => a.id);
+    // Step 5: Build ranking
+    if (goodAnswers.length <= 1) {
+      const rankedGoodIds = goodAnswers.map((a) => a.id);
+      const rankedBadIds = badAnswers.map((a) => a.id);
+      answerRankings = [...rankedGoodIds, ...rankedBadIds];
+      goodAnswerIds = rankedGoodIds;
+    } else {
+      const n = goodAnswers.length;
+      const wins: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+      const pairs = buildPairwisePairs(n);
+
+      log(`[${tag}] Running ${pairs.length} pairwise comparisons...`);
+
+      let cmpDone = 0;
+      const cmpTotal = pairs.length;
+      const compareResults = await mapWithConcurrency(
+        pairs,
+        concurrency,
+        async ([aIdx, bIdx]): Promise<[number, number, string | null]> => {
+          const result = await llm.comparePairwise(
+            problem,
+            goodAnswers[aIdx].decrypted_content!,
+            goodAnswers[bIdx].decrypted_content!,
+            RANKING_LLM_RETRIES,
+          );
+          cmpDone++;
+          const winner = result === "A" ? `#${aIdx + 1} wins` : result === "B" ? `#${bIdx + 1} wins` : result === "U" ? "tie" : "skip";
+          log(`[${tag}] Compare ${cmpDone}/${cmpTotal} (#${aIdx + 1} vs #${bIdx + 1}) → ${winner}`);
+          return [aIdx, bIdx, result];
+        },
+      );
+
+      for (const [aIdx, bIdx, result] of compareResults) {
+        if (result === null) continue;
+        if (result === "A") wins[aIdx][bIdx] += 1;
+        else if (result === "B") wins[bIdx][aIdx] += 1;
+        else if (result === "U") {
+          wins[aIdx][bIdx] += 0.5;
+          wins[bIdx][aIdx] += 0.5;
+        }
+      }
+
+      // Step 6: Run local Bradley-Terry
+      const strengths = computeBradleyTerry(wins);
+      const indexed = strengths
+        .map((s, i) => ({ idx: i, strength: s }))
+        .sort((a, b) => b.strength - a.strength);
+
+      const ranking = indexed.map((x) => `#${x.idx + 1}:${x.strength.toFixed(2)}`).join(" > ");
+      log(`[${tag}] BT ranking: ${ranking}`);
+
+      const rankedGoodIds = indexed.map((x) => goodAnswers[x.idx].id);
+      const rankedBadIds = badAnswers.map((a) => a.id);
+      answerRankings = [...rankedGoodIds, ...rankedBadIds];
+      goodAnswerIds = goodAnswers.map((a) => a.id);
+    }
+
+    // Step 7: Submit vote
+    log(`[${tag}] Submitting vote with ${answerRankings.length} ranked answers...`);
+    const voteResult = await client.submitVote(challengeId, answerRankings, goodAnswerIds);
+    log(`[${tag}] Vote submitted! vote_id=${voteResult.vote_id ?? "?"}`);
+  } finally {
+    unpinTask(challengeId);
   }
-
-  // Step 7: Submit vote
-  log(`[${tag}] Submitting vote with ${answerRankings.length} ranked answers...`);
-  const voteResult = await client.submitVote(challengeId, answerRankings, goodAnswerIds);
-  log(`[${tag}] Vote submitted! vote_id=${voteResult.vote_id ?? "?"}`);
 }

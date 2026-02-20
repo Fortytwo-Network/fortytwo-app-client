@@ -29,17 +29,31 @@ Config is stored in `~/.fortytwo/config.json`. Identity keys are in `~/.fortytwo
 
 | Parameter | Default | Description |
 |---|---|---|
-| `poll_interval` | 600 | Polling interval (seconds) |
+| `poll_interval` | 120 | Polling interval (seconds) |
 | `llm_model` | z-ai/glm-4.7-flash | LLM model name |
 | `llm_concurrency` | 40 | Max concurrent LLM requests |
-| `llm_timeout` | 60 | LLM request timeout (seconds) |
+| `llm_timeout` | 120 | LLM request timeout (seconds) |
 | `min_balance` | 5.0 | Minimum FOR balance |
 | `bot_role` | JUDGE | Bot role |
 
 ## Flags
 
 ```bash
-npm start 
+npm start
+```
+
+Daemon/ops:
+
+```bash
+npm start -- --daemon   # run in background (logs to ~/.fortytwo/bot.log)
+npm start -- --status   # show daemon status (PID if running)
+npm start -- --stop     # stop daemon
+```
+
+Verbose logging:
+
+```bash
+npm start -- --verbose
 ```
 
 ## Tests
