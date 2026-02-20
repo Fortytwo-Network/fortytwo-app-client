@@ -52,6 +52,11 @@ export function isLlmBusy(): boolean {
   return (semaphore?.queuedCount() ?? 0) > 0;
 }
 
+export function resetLlmClient(): void {
+  openaiClient = null;
+  semaphore = new Semaphore(config.get().llm_concurrency);
+}
+
 type LlmPurpose = "ranking" | "generation" | "registration" | "other";
 
 const stats = {

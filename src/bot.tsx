@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useStdout } from "ink";
+import { CommandInput } from "./command-input.js";
 import { get as getConfig } from "./config.js";
 import { setLogFn, setVerbose, log, sleep, getPinnedTasks } from "./utils.js";
 import type { PinnedTask } from "./utils.js";
@@ -8,11 +9,13 @@ import { loadIdentity } from "./identity.js";
 import { runCycle, checkBalance, InsufficientFundsError, getTaskStats } from "./main.js";
 import { getLlmStats } from "./llm.js";
 import { resetAccount } from "./identity.js";
+import { executeCommand, SUGGESTIONS } from "./commands.js";
 
 const COLOR = "rgb(42, 42, 242)";
 const MAX_LINES = 200;
-// banner(6) + padding(1) + marginTop(1) + status(2) + separator(1) + gap(1) + error(1) + margin
-const CHROME_LINES = 15;
+const MAX_PINNED_LINES = 3;
+// app wrapper(9) + status(3) + tasks-fixed(3) + separator(1) + prompt(1) + gaps(4)
+const CHROME_LINES = 21;
 
 function formatCountdown(ms: number): string {
   const s = Math.ceil(ms / 1000);
@@ -44,6 +47,11 @@ export default function BotScreen() {
   }, []);
 
   const [client, setClient] = useState<FortyTwoClient | null>(null);
+
+  const handleCommand = useCallback((input: string) => {
+    const results = executeCommand(input);
+    for (const line of results) pushLine(line);
+  }, [pushLine]);
 
   // Countdown ticker — updates every second
   useEffect(() => {
@@ -186,15 +194,15 @@ export default function BotScreen() {
         </Text>
         <Text dimColor>Answered: {done.answering}  ·  Judged: {done.judging}</Text>
       </Box>
-      {tasks.length > 0 && (
-        <Box flexDirection="column">
-          {tasks.map((t) => (
-            <Text key={t.id} color="cyan">
-              ● {t.label} ({formatCountdown(Date.now() - t.startedAt)})
-            </Text>
-          ))}
-        </Box>
-      )}
+
+      <Box flexDirection="column" height={MAX_PINNED_LINES}>
+        {tasks.slice(0, MAX_PINNED_LINES).map((t) => (
+          <Text key={t.id} color="cyan">
+            ● {t.label} ({formatCountdown(Date.now() - t.startedAt)})
+          </Text>
+        ))}
+      </Box>
+
       <Text dimColor>{"─".repeat(Math.min(stdout.columns ?? 72, 72))}</Text>
 
       <Box flexDirection="column" height={visibleCount}>
@@ -210,6 +218,11 @@ export default function BotScreen() {
       </Box>
 
       {error && <Text color="red">{error}</Text>}
+
+      <Box>
+        <Text color={COLOR} bold>{">"} </Text>
+        <CommandInput placeholder="type help" suggestions={SUGGESTIONS} onSubmit={handleCommand} />
+      </Box>
     </Box>
   );
 }
