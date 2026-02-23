@@ -30,15 +30,17 @@ export default function App() {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Box flexDirection="column">
-        {banner.map((line, i) => (
-          <Text key={i} color={COLOR} bold>
-            {line}
-          </Text>
-        ))}
-      </Box>
+      {screen !== "running" && (
+        <Box flexDirection="column">
+          {banner.map((line, i) => (
+            <Text key={i} color={COLOR} bold>
+              {line}
+            </Text>
+          ))}
+        </Box>
+      )}
 
-      <Box marginTop={1}>
+      <Box marginTop={screen !== "running" ? 1 : 0}>
         {screen === "onboard" && (
           <Onboard
             onDone={() => {

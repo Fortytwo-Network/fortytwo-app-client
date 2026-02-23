@@ -22,10 +22,18 @@ type AgentStats = {
 };
 
 const COLOR = "rgb(42, 42, 242)";
+
+const LOGO = [
+"██╗██╗  ██╗██╗",
+"╚═╝╚═╝  ██║██║",
+"██╗██╗  ██║██║",
+"╚═╝╚═╝  ╚═╝╚═╝", 
+]         
+
 const MAX_LINES = 200;
 const MAX_PINNED_LINES = 3;
-// app wrapper(9) + status(3) + tasks-fixed(3) + separator(1) + prompt(1) + gaps(4)
-const CHROME_LINES = 21;
+// padding(2) + logo+stats(3) + tasks(3) + separator(1) + prompt(1) + gaps(4)
+const CHROME_LINES = 14;
 
 function formatCountdown(ms: number): string {
   const s = Math.ceil(ms / 1000);
@@ -170,7 +178,7 @@ export default function BotScreen() {
         setClient(c);
 
         const name = cfg.agent_name || cfg.display_name || "Agent";
-        setStatus(`${name} (${identity.agent_id}) | ${cfg.bot_role}`);
+        setStatus(`${name} | ${cfg.bot_role}`);
         log(`Logged in as ${name} — ${identity.agent_id}`);
         log(`Role: ${cfg.bot_role} | Poll: ${cfg.poll_interval}s | Model: ${cfg.llm_model}`);
 
@@ -228,19 +236,25 @@ export default function BotScreen() {
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Box flexDirection="column">
-        <Text color={COLOR} bold>{status}</Text>
-        <Text>
-          Balance: {balance !== null
-            ? <Text color={balanceColor} bold>{balance.toFixed(2)} FOR</Text>
-            : <Text dimColor>loading...</Text>}
-          <Text dimColor>  ·  {getConfig().llm_model}</Text>
-          <Text dimColor>  ·  LLM {llmActive}/{getConfig().llm_concurrency}</Text>
-          {countdown && <Text dimColor>  ·  next poll in {countdown}</Text>}
-        </Text>
-        {stats
-          ? <Text dimColor>Q: {stats.queries} ({stats.queriesCompleted} done)  ·  A: {stats.answers} ({stats.answersWon} wins)  ·  J: {stats.judgments}</Text>
-          : <Text dimColor>loading stats...</Text>}
+      <Box gap={2}>
+        <Box flexDirection="column">
+          {LOGO.map((line, i) => (
+            <Text key={i} color={COLOR} bold>{line}</Text>
+          ))}
+        </Box>
+        <Box flexDirection="column">
+          <Text color={COLOR} bold>{status}</Text>
+          <Text>
+            {balance !== null
+              ? <Text color={balanceColor} bold>{balance.toFixed(2)} FOR</Text>
+              : <Text dimColor>loading...</Text>}
+            <Text dimColor> · {getConfig().llm_model}</Text>
+            <Text dimColor> · LLM {llmActive}/{getConfig().llm_concurrency}</Text>
+          </Text>
+          {stats
+            ? <Text dimColor>Q: {stats.queries} ({stats.queriesCompleted} done) · A: {stats.answers} ({stats.answersWon} wins) · J: {stats.judgments}{countdown ? ` · ${countdown}` : ""}</Text>
+            : <Text dimColor>{countdown ? countdown : "loading stats..."}</Text>}
+        </Box>
       </Box>
 
       <Box flexDirection="column" height={MAX_PINNED_LINES}>
