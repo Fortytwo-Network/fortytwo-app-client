@@ -160,7 +160,7 @@ export async function runCycle(client: FortyTwoClient): Promise<number> {
   return total;
 }
 
-export async function main(): Promise<void> {
+export async function main(signal?: AbortSignal): Promise<void> {
   const cfg = config.get();
   if (process.argv.includes("--verbose") || process.argv.includes("-v")) {
     setVerbose(true);
@@ -192,7 +192,7 @@ export async function main(): Promise<void> {
     await client.login(identity.agent_id, identity.secret);
 
     log(`Starting polling loop (interval: ${cfg.poll_interval}s)`);
-    while (true) {
+    while (!signal?.aborted) {
       const cycleStart = Date.now();
       try {
         const available = await checkBalance(client);
@@ -205,6 +205,7 @@ export async function main(): Promise<void> {
         const count = await runCycle(client);
         if (count > 0) log(`Processed ${count} items this cycle`);
       } catch (err) {
+        if (signal?.aborted) return;
         if (err instanceof InsufficientFundsError) {
           log(`${err.message} — resetting account...`);
           await resetAccount(client);
@@ -214,10 +215,11 @@ export async function main(): Promise<void> {
         log(`Error in polling cycle: ${err}`);
       }
 
+      if (signal?.aborted) return;
       const elapsed = Date.now() - cycleStart;
       const delay = cfg.poll_interval * 1000 - elapsed;
       if (delay > 0) {
-        await sleep(delay);
+        await sleep(delay, signal);
       } else {
         log(`Cycle took ${Math.round(elapsed / 1000)}s (> ${cfg.poll_interval}s), starting next immediately`);
       }
