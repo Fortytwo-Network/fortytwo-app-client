@@ -36,6 +36,7 @@ export const SUGGESTIONS = [
   ...CONFIG_KEYS.map((k) => `/config set ${k} `),
   "/verbose on",
   "/verbose off",
+  "/exit",
 ];
 
 export function executeCommand(input: string): string[] {
@@ -56,7 +57,12 @@ export function executeCommand(input: string): string[] {
       "  /config show       — show all config values",
       "  /config set <k> <v> — change a config value",
       "  /verbose on|off    — toggle verbose logging",
+      "  /exit              — quit the application",
     ];
+  }
+
+  if (cmd === "exit" || cmd === "quit") {
+    process.exit(0);
   }
 
   if (cmd === "identity") {
