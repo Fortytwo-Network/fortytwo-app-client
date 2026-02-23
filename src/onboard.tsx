@@ -11,14 +11,17 @@ import {
   type InferenceType,
 } from "./config.js";
 import { FortyTwoClient } from "./api-client.js";
-import { registerAgent } from "./identity.js";
+import { registerAgent, saveIdentity } from "./identity.js";
 
 const COLOR = "rgb(42, 42, 242)";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 type StepId =
+  | "setup_mode"
   | "agent_name"
+  | "agent_id"
+  | "agent_secret"
   | "inference_type"
   | "openrouter_api_key"
   | "llm_api_base"
@@ -34,6 +37,11 @@ interface StepDef {
   options?: { label: string; value: string }[];
 }
 
+const SETUP_MODE_OPTIONS = [
+  { label: "Register new agent", value: "new" },
+  { label: "Import existing agent", value: "import" },
+];
+
 const INFERENCE_OPTIONS = [
   { label: "OpenRouter", value: "openrouter" },
   { label: "Local inference", value: "local" },
@@ -45,11 +53,21 @@ const ROLE_OPTIONS = [
   { label: "ANSWERER_AND_JUDGE — both", value: "ANSWERER_AND_JUDGE" },
 ];
 
-function buildSteps(inferenceType?: InferenceType): StepDef[] {
+function buildSteps(inferenceType?: InferenceType, setupMode?: string): StepDef[] {
   const steps: StepDef[] = [
-    { id: "agent_name", label: "Agent Name", type: "text", placeholder: "JudgeBot" },
-    { id: "inference_type", label: "Inference Provider", type: "select", options: INFERENCE_OPTIONS },
+    { id: "setup_mode", label: "Setup Mode", type: "select", options: SETUP_MODE_OPTIONS },
   ];
+
+  if (setupMode === "import") {
+    steps.push(
+      { id: "agent_id", label: "Agent ID", type: "text", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+      { id: "agent_secret", label: "Agent Secret", type: "text", placeholder: "your-secret", mask: true },
+    );
+  } else {
+    steps.push({ id: "agent_name", label: "Agent Name", type: "text", placeholder: "JudgeBot" });
+  }
+
+  steps.push({ id: "inference_type", label: "Inference Provider", type: "select", options: INFERENCE_OPTIONS });
 
   if (inferenceType === "local") {
     steps.push(
@@ -69,7 +87,8 @@ function buildSteps(inferenceType?: InferenceType): StepDef[] {
 }
 
 function displayValue(key: string, value: string): string {
-  if (key === "openrouter_api_key") return "***";
+  if (key === "openrouter_api_key" || key === "agent_secret") return "***";
+  if (key === "setup_mode") return value === "import" ? "Import existing" : "Register new";
   if (key === "inference_type") return value === "local" ? "Local inference" : "OpenRouter";
   return value;
 }
@@ -130,8 +149,8 @@ async function validateModel(values: Record<string, string>): Promise<ValidateRe
 function buildConfig(values: Record<string, string>): UserConfig {
   const isLocal = values.inference_type === "local";
   return {
-    agent_name: values.agent_name ?? "",
-    display_name: values.agent_name ?? "",
+    agent_name: values.agent_name || values._display_name || values.agent_id || "",
+    display_name: values.agent_name || values._display_name || values.agent_id || "",
     inference_type: isLocal ? "local" : "openrouter",
     openrouter_api_key: values.openrouter_api_key ?? "",
     llm_api_base: values.llm_api_base ?? "",
@@ -147,7 +166,7 @@ function buildConfig(values: Record<string, string>): UserConfig {
   };
 }
 
-type Phase = "input" | "validating" | "registering";
+type Phase = "input" | "validating" | "validating_creds" | "registering" | "importing";
 
 interface OnboardProps {
   onDone: () => void;
@@ -158,14 +177,54 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   const [stepIdx, setStepIdx] = useState(0);
   const [values, setValues] = useState<Record<string, string>>({});
   const [inferenceType, setInferenceType] = useState<InferenceType | undefined>();
+  const [setupMode, setSetupMode] = useState<string | undefined>();
   const [phase, setPhase] = useState<Phase>(skipToRegistration ? "registering" : "input");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [regLog, setRegLog] = useState<string[]>([]);
   const [regError, setRegError] = useState<string | null>(null);
 
-  const steps = buildSteps(inferenceType);
+  const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
   const isLast = stepIdx === steps.length - 1;
+
+  // Credentials validation (import flow)
+  useEffect(() => {
+    if (phase !== "validating_creds") return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const client = new FortyTwoClient();
+        await client.login(values.agent_id, values.agent_secret);
+
+        // Fetch display name
+        let displayName = values.agent_id;
+        try {
+          const agent = await client.getAgent();
+          displayName = agent?.profile?.display_name || displayName;
+        } catch { /* keep agent_id as name */ }
+
+        if (cancelled) return;
+        setValues((prev) => ({ ...prev, _display_name: displayName }));
+        setValidationError(null);
+        setPhase("input");
+        setStepIdx(stepIdx + 1);
+      } catch (err) {
+        if (cancelled) return;
+        // Return to agent_id step so user can fix either field
+        const agentIdIdx = steps.findIndex((s) => s.id === "agent_id");
+        setValues((prev) => {
+          const { agent_id: _, agent_secret: __, ...rest } = prev;
+          return rest;
+        });
+        setStepIdx(agentIdIdx >= 0 ? agentIdIdx : stepIdx);
+        setValidationError(`Invalid credentials: ${err}`);
+        setPhase("input");
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [phase === "validating_creds"]);
 
   // Model validation
   useEffect(() => {
@@ -232,12 +291,52 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     return () => { cancelled = true; };
   }, [phase === "registering"]);
 
+  // Import existing agent
+  useEffect(() => {
+    if (phase !== "importing") return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setRegLog(["Saving config..."]);
+        const cfg = buildConfig(values);
+        saveConfig(cfg);
+        reloadConfig();
+
+        saveIdentity(getConfig().identity_file, {
+          agent_id: values.agent_id,
+          secret: values.agent_secret,
+        });
+
+        const name = values._display_name || values.agent_id;
+        setRegLog((prev) => [...prev, `Agent "${name}" (${values.agent_id}) imported!`]);
+        onDone();
+      } catch (err) {
+        if (cancelled) return;
+        setRegError(String(err));
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [phase === "importing"]);
+
   function advance(value: string) {
     const next = { ...values, [step!.id]: value };
     setValues(next);
 
+    if (step!.id === "setup_mode") {
+      setSetupMode(value);
+    }
+
     if (step!.id === "inference_type") {
       setInferenceType(value as InferenceType);
+    }
+
+    if (step!.id === "agent_secret") {
+      setValidationError(null);
+      setPhase("validating_creds");
+      return;
     }
 
     if (step!.id === "llm_model") {
@@ -247,13 +346,24 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     }
 
     if (isLast) {
-      setPhase("registering");
+      setPhase(setupMode === "import" ? "importing" : "registering");
     } else {
       setStepIdx(stepIdx + 1);
     }
   }
 
-  if (!step && phase !== "registering") return null;
+  if (!step && phase !== "registering" && phase !== "importing") return null;
+
+  if (phase === "validating_creds") {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text color={COLOR} bold>
+          Setup ({stepIdx + 1}/{steps.length})
+        </Text>
+        <Text color="yellow">Checking credentials...</Text>
+      </Box>
+    );
+  }
 
   if (phase === "validating") {
     return (
@@ -266,13 +376,14 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     );
   }
 
-  if (phase === "registering") {
+  if (phase === "registering" || phase === "importing") {
     const displayLine = (line: string) => line.replace(/^\[progress]/, "");
     const last = regLog.length - 1;
+    const header = phase === "importing" ? "Import Agent" : "Registration";
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>Registration</Text>
+        <Text color={COLOR} bold>{header}</Text>
         {regLog.length === 0 && <Text color="yellow">Starting registration...</Text>}
         <Box flexDirection="column">
           {regLog.map((line, i) => {

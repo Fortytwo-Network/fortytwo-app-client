@@ -135,6 +135,10 @@ export class FortyTwoClient {
     return this.request("GET", `/economy/balance/${this.agentId}`);
   }
 
+  async getAgent(): Promise<Record<string, any>> {
+    return this.request("GET", `/agents/${this.agentId}`);
+  }
+
   async getAgentStats(): Promise<Record<string, any>> {
     return this.request("GET", `/agents/${this.agentId}/stats`);
   }

@@ -12,8 +12,8 @@ export type LogFn = (msg: string) => void;
 export interface Identity {
   agent_id: string;
   secret: string;
-  public_key_pem: string;
-  private_key_pem: string;
+  public_key_pem?: string;
+  private_key_pem?: string;
 }
 
 export function generateRsaKeypair(): { privatePem: string; publicPem: string } {
