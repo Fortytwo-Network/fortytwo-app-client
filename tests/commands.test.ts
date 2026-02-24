@@ -129,4 +129,23 @@ describe("executeCommand", () => {
     const result = executeCommand("/foobar");
     expect(result[0]).toContain("Unknown command");
   });
+
+  it("/exit calls process.exit(0)", () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    executeCommand("/exit");
+    expect(exitSpy).toHaveBeenCalledWith(0);
+    exitSpy.mockRestore();
+  });
+
+  it("/quit calls process.exit(0)", () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    executeCommand("/quit");
+    expect(exitSpy).toHaveBeenCalledWith(0);
+    exitSpy.mockRestore();
+  });
+
+  it("/config without subcommand returns usage", () => {
+    const result = executeCommand("/config");
+    expect(result[0]).toContain("Usage:");
+  });
 });

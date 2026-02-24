@@ -6,7 +6,7 @@ dist/
 !vitest.config.ts
 .vscode
 .claude
-
+coverage
 .env
 .env.*
 *.log

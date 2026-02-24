@@ -1,5 +1,17 @@
-import { describe, it, expect } from "vitest";
-import { secondsUntilDeadline, parseLastLetter, sleep } from "../src/utils.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  secondsUntilDeadline,
+  parseLastLetter,
+  sleep,
+  setLogFn,
+  log,
+  setVerbose,
+  verbose,
+  pinTask,
+  unpinTask,
+  getPinnedTasks,
+  mapWithConcurrency,
+} from "../src/utils.js";
 
 describe("secondsUntilDeadline", () => {
   it("returns positive seconds for a future deadline", () => {
@@ -24,6 +36,11 @@ describe("secondsUntilDeadline", () => {
   it("returns 0 for invalid string", () => {
     expect(secondsUntilDeadline("not-a-date")).toBe(0);
     expect(secondsUntilDeadline("")).toBe(0);
+  });
+
+  it("returns 0 on exception (non-string input)", () => {
+    expect(secondsUntilDeadline(null as any)).toBe(0);
+    expect(secondsUntilDeadline(undefined as any)).toBe(0);
   });
 });
 
@@ -64,5 +81,110 @@ describe("sleep", () => {
     const start = Date.now();
     await sleep(50);
     expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+  });
+
+  it("resolves immediately if signal already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const start = Date.now();
+    await sleep(10_000, ac.signal);
+    expect(Date.now() - start).toBeLessThan(50);
+  });
+
+  it("resolves early when signal aborts", async () => {
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 20);
+    const start = Date.now();
+    await sleep(10_000, ac.signal);
+    expect(Date.now() - start).toBeLessThan(200);
+  });
+});
+
+describe("log / setLogFn", () => {
+  it("uses custom log function", () => {
+    const msgs: string[] = [];
+    setLogFn((m) => msgs.push(m));
+    log("hello");
+    expect(msgs).toEqual(["hello"]);
+    setLogFn(console.log);
+  });
+});
+
+describe("verbose / setVerbose", () => {
+  it("logs when verbose is on", () => {
+    const msgs: string[] = [];
+    setLogFn((m) => msgs.push(m));
+    setVerbose(true);
+    verbose("detail");
+    expect(msgs[0]).toContain("[verbose]");
+    expect(msgs[0]).toContain("detail");
+    setVerbose(false);
+    setLogFn(console.log);
+  });
+
+  it("does not log when verbose is off", () => {
+    const msgs: string[] = [];
+    setLogFn((m) => msgs.push(m));
+    setVerbose(false);
+    verbose("hidden");
+    expect(msgs).toEqual([]);
+    setLogFn(console.log);
+  });
+});
+
+describe("pinTask / unpinTask / getPinnedTasks", () => {
+  beforeEach(() => {
+    for (const t of getPinnedTasks()) unpinTask(t.id);
+  });
+
+  it("pins and retrieves tasks", () => {
+    pinTask("t1", "Task 1");
+    const tasks = getPinnedTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe("t1");
+    expect(tasks[0].label).toBe("Task 1");
+    expect(tasks[0].startedAt).toBeGreaterThan(0);
+  });
+
+  it("unpins tasks", () => {
+    pinTask("t1", "Task 1");
+    unpinTask("t1");
+    expect(getPinnedTasks()).toHaveLength(0);
+  });
+});
+
+describe("mapWithConcurrency", () => {
+  it("processes all items", async () => {
+    const results = await mapWithConcurrency([1, 2, 3], 2, async (x) => x * 2);
+    expect(results).toEqual([2, 4, 6]);
+  });
+
+  it("preserves order", async () => {
+    const results = await mapWithConcurrency([3, 1, 2], 1, async (x) => x * 10);
+    expect(results).toEqual([30, 10, 20]);
+  });
+
+  it("returns empty for empty input", async () => {
+    const results = await mapWithConcurrency([], 5, async (x) => x);
+    expect(results).toEqual([]);
+  });
+
+  it("respects concurrency limit", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const results = await mapWithConcurrency([1, 2, 3, 4], 2, async (x) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await sleep(10);
+      active--;
+      return x;
+    });
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect(results).toEqual([1, 2, 3, 4]);
+  });
+
+  it("handles limit of 0 or negative", async () => {
+    const results = await mapWithConcurrency([1, 2], 0, async (x) => x);
+    expect(results).toEqual([1, 2]);
   });
 });
