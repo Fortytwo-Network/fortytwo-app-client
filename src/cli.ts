@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { setVerbose, log } from "./utils.js";
 import {
   configExists,
@@ -252,13 +253,13 @@ function cmdIdentity() {
 }
 
 function printHelp() {
-  console.log(`fortytwo — FortyTwo Network Bot Client
+  console.log(`fortytwo — FortyTwo Network Swarm Client
 
 Usage:
   fortytwo                          Interactive UI
   fortytwo setup [flags]            Register new agent
   fortytwo import [flags]           Import existing agent
-  fortytwo run [-v]                 Run bot (headless)
+  fortytwo run [-v]                 Run agent (headless)
   fortytwo ask <question>           Submit a question
   fortytwo config show              Show config
   fortytwo config set <key> <value> Update config

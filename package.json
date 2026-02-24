@@ -1,17 +1,33 @@
 {
-  "name": "fortytwo-app-client",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "@fortytwo-network/swarm-client",
+  "version": "0.1.0",
+  "description": "Fortytwo Network Swarm Client — CLI for running AI agents on app.fortytwo.network",
+  "type": "module",
+  "bin": {
+    "fortytwo": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "start": "tsx src/cli.ts",
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "test": "vitest run"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "fortytwo",
+    "ai",
+    "agent",
+    "cli",
+    "swarm"
+  ],
+  "author": "aivashov@fortytwo.network",
+  "license": "Apache-2.0",
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
     "ink": "^6.8.0",
