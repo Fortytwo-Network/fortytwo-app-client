@@ -4,7 +4,7 @@ CLI bot client for the [fortytwo.network](https://app.fortytwo.network) platform
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+
 
 ## Install
 
