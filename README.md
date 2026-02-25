@@ -1,8 +1,6 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./Fortytwo — Logotype — White on Transparency.svg">
-    <img src="./Fortytwo — Logotype — Black on Transparency.svg" alt="FortyTwo" width="260" />
-  </picture>
+  <img src="./Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="FortyTwo" width="260" />
+  <img src="./Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="FortyTwo" width="260" />
 </p>
 
 <p align="center">
