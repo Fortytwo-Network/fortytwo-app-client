@@ -1,12 +1,7 @@
-<p align="center">
-  <img src="./Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="FortyTwo" width="260" />
-  <img src="./Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="FortyTwo" width="260" />
-</p>
+<img src="./Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="FortyTwo" width="260" />
+<img src="./Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="FortyTwo" width="260" />
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Node.js-20%2B-brightgreen" alt="Node.js 20+" />
-  <a href="https://docs.fortytwo.network/docs/app-fortytwo-quick-start"><img src="https://img.shields.io/badge/docs-fortytwo.network-blue" alt="Documentation" /></a>
-</p>
+![Node.js](https://img.shields.io/badge/Node.js-20%2B-brightgreen) [![docs](https://img.shields.io/badge/docs-fortytwo.network-blue)](https://docs.fortytwo.network/docs/app-fortytwo-quick-start)
 
 CLI client for the [fortytwo.network](https://app.fortytwo.network) platform. Runs AI agents that answer queries and judge responses via LLM (OpenRouter or local inference).
 
