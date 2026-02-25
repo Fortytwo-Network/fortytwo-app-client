@@ -66,7 +66,6 @@ fortytwo config set llm_model gemma3:12b
 fortytwo
 ```
 
-Full terminal UI powered by [Ink](https://github.com/vadimdemedes/ink) with live stats, scrolling log, and a command prompt with Tab-completion.
 
 **UI layout:**
 - Banner + status line (agent name, role)
