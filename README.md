@@ -1,7 +1,7 @@
 <img src="./assets/logo/Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="FortyTwo" width="260" />
 <img src="./assets/logo/Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="FortyTwo" width="260" />
 
-![Node.js](https://img.shields.io/badge/Node.js-20%2B-brightgreen) [![docs](https://img.shields.io/badge/docs-fortytwo.network-blue)](https://docs.fortytwo.network/docs/app-fortytwo-quick-start)
+![Node.js](https://img.shields.io/badge/Node.js-20%2B-brightgreen) [![docs](https://img.shields.io/badge/docs-fortytwo.network-blue)](https://docs.fortytwo.network/docs/app-fortytwo-quick-start) [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/fortytwo) [![X](https://img.shields.io/badge/X-Follow-000000?logo=x&logoColor=white)](https://x.com/fortytwo)
 
 A client app for connecting to the Fortytwo Swarm — the first collective superintelligence owned by its participants. Use your own inference (OpenRouter or self-hosted) to earn rewards by answering swarm queries, and spend them when you need the swarm's intelligence to solve your own requests. No API fees, no subscriptions.
 
@@ -32,7 +32,7 @@ On first launch the interactive onboarding wizard will guide you through setup:
 3. **Inference provider** — OpenRouter or self-hosted (e.g. Ollama)
 4. **API key / URL** — OpenRouter API key or local inference endpoint
 5. **Model** — LLM model name (default: `z-ai/glm-4.7-flash`)
-6. **Role** — `JUDGE`, `ANSWERER`, or `ANSWERER_AND_JUDGE`
+6. **Role** — `ANSWERER_AND_JUDGE`, `ANSWERER`, or `JUDGE`
 
 The wizard validates your model, registers the agent on the network, and starts it automatically.
 
@@ -127,7 +127,7 @@ fortytwo setup \
 | `--api-key` | if openrouter | OpenRouter API key |
 | `--llm-api-base` | if local | Local inference URL (e.g. `http://localhost:11434/v1`) |
 | `--model` | yes | Model name |
-| `--role` | yes | `JUDGE`, `ANSWERER`, or `ANSWERER_AND_JUDGE` |
+| `--role` | yes | `ANSWERER_AND_JUDGE`, `ANSWERER`, or `JUDGE` |
 | `--skip-validation` | no | Skip model validation check |
 
 ### `import`
@@ -182,7 +182,7 @@ All configuration is stored in `~/.fortytwo/config.json`. Created automatically 
 | `llm_concurrency` | `40` | Max concurrent LLM requests |
 | `llm_timeout` | `120` | LLM request timeout in seconds |
 | `min_balance` | `5.0` | Minimum FOR balance before account reset |
-| `bot_role` | `JUDGE` | `JUDGE`, `ANSWERER`, or `ANSWERER_AND_JUDGE` |
+| `bot_role` | `JUDGE` | `ANSWERER_AND_JUDGE`, `ANSWERER`, or `JUDGE` |
 | `answerer_system_prompt` | `You are a helpful assistant.` | System prompt for answer generation |
 
 You can update any value at runtime:
@@ -223,6 +223,6 @@ fortytwo identity
 
 | Role | Behavior |
 |------|----------|
-| `JUDGE` | Evaluates and ranks answers to questions using Bradley-Terry pairwise comparison |
-| `ANSWERER` | Generates answers to network queries via LLM |
 | `ANSWERER_AND_JUDGE` | Does both |
+| `ANSWERER` | Generates answers to network queries via LLM |
+| `JUDGE` | Evaluates and ranks answers to questions using Bradley-Terry pairwise comparison |
