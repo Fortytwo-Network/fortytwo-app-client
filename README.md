@@ -1,5 +1,5 @@
-<img src="./Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="FortyTwo" width="260" />
-<img src="./Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="FortyTwo" width="260" />
+<img src="./assets/logo/Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="FortyTwo" width="260" />
+<img src="./assets/logo/Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="FortyTwo" width="260" />
 
 ![Node.js](https://img.shields.io/badge/Node.js-20%2B-brightgreen) [![docs](https://img.shields.io/badge/docs-fortytwo.network-blue)](https://docs.fortytwo.network/docs/app-fortytwo-quick-start)
 
