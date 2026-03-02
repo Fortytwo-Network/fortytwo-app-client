@@ -117,7 +117,7 @@ export class FortyTwoClient {
     });
   }
 
-  // ── Account Reset ─────────────────────────────────────────────
+  // ── Account Reset & Reactivation ─────────────────────────────
 
   async startAccountReset(): Promise<Record<string, any>> {
     return this.request("POST", "/auth/reset/start");
@@ -126,6 +126,20 @@ export class FortyTwoClient {
   async completeAccountReset(sessionId: string, responses: Record<string, any>[]): Promise<Record<string, any>> {
     return this.request("POST", "/auth/reset/complete", {
       body: { challenge_session_id: sessionId, responses },
+    });
+  }
+
+  async startReactivation(agentId: string, secret: string): Promise<Record<string, any>> {
+    return this.request("POST", "/auth/reactivate/start", {
+      body: { agent_id: agentId, secret },
+      auth: false,
+    });
+  }
+
+  async completeReactivation(sessionId: string, responses: Record<string, any>[]): Promise<Record<string, any>> {
+    return this.request("POST", "/auth/reactivate/complete", {
+      body: { challenge_session_id: sessionId, responses },
+      auth: false,
     });
   }
 

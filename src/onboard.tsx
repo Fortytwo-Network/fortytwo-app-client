@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { TextInput, Select } from "@inkjs/ui";
 import {
   saveConfig,
@@ -9,7 +9,7 @@ import {
 } from "./config.js";
 import { FortyTwoClient } from "./api-client.js";
 import { registerAgent, saveIdentity } from "./identity.js";
-import { validateModel, buildConfig } from "./setup-logic.js";
+import { validateModel, fetchModels, buildConfig } from "./setup-logic.js";
 
 const COLOR = "rgb(42, 42, 242)";
 
@@ -89,7 +89,7 @@ function displayValue(key: string, value: string): string {
   return value;
 }
 
-type Phase = "input" | "validating" | "validating_creds" | "registering" | "importing";
+type Phase = "input" | "validating" | "validating_creds" | "fetching_models" | "registering" | "importing";
 
 interface OnboardProps {
   onDone: () => void;
@@ -105,10 +105,50 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [regLog, setRegLog] = useState<string[]>([]);
   const [regError, setRegError] = useState<string | null>(null);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelFilter, setModelFilter] = useState("");
+  const [highlightIdx, setHighlightIdx] = useState(-1);
 
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
   const isLast = stepIdx === steps.length - 1;
+
+  // Autocomplete: filtered models for current query
+  const modelQuery = modelFilter.toLowerCase();
+  const filteredModels = step?.id === "llm_model" && modelQuery && availableModels.length > 0
+    ? availableModels.filter((m) => m.toLowerCase().includes(modelQuery))
+    : [];
+  const isModelAutocomplete = phase === "input" && step?.id === "llm_model" && availableModels.length > 0;
+
+  useInput((input, key) => {
+    if (key.downArrow) {
+      setHighlightIdx((prev) => Math.min(prev + 1, filteredModels.length - 1));
+    } else if (key.upArrow) {
+      setHighlightIdx((prev) => Math.max(prev - 1, -1));
+    } else if (key.return) {
+      if (highlightIdx >= 0 && highlightIdx < filteredModels.length) {
+        advance(filteredModels[highlightIdx]);
+        return;
+      }
+      const val = modelFilter;
+      const exact = availableModels.find((m) => m === val);
+      if (exact) { advance(val); return; }
+      if (filteredModels.length === 1) { advance(filteredModels[0]); return; }
+      if (!val) {
+        setValidationError("Type a model name to search");
+      } else if (filteredModels.length === 0) {
+        setValidationError(`No models matching "${val}"`);
+      } else {
+        setValidationError(`${filteredModels.length} matches — use arrows to select`);
+      }
+    } else if (key.backspace || key.delete) {
+      setModelFilter((prev) => prev.slice(0, -1));
+      setHighlightIdx(-1);
+    } else if (input && !key.ctrl && !key.meta) {
+      setModelFilter((prev) => prev + input);
+      setHighlightIdx(-1);
+    }
+  }, { isActive: isModelAutocomplete });
 
   // Credentials validation (import flow)
   useEffect(() => {
@@ -148,6 +188,31 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
 
     return () => { cancelled = true; };
   }, [phase === "validating_creds"]);
+
+  // Fetch models after URL/key entry
+  useEffect(() => {
+    if (phase !== "fetching_models") return;
+
+    let cancelled = false;
+    const isLocal = values.inference_type === "local";
+    const baseUrl = isLocal ? values.llm_api_base : "https://openrouter.ai/api/v1";
+    const apiKey = isLocal ? "EMPTY" : values.openrouter_api_key;
+
+    fetchModels(baseUrl, apiKey).then((result) => {
+      if (cancelled) return;
+      if (!result.ok) {
+        setValidationError(result.error ?? "Cannot reach server");
+        setPhase("input");
+        return;
+      }
+      setAvailableModels(result.models);
+      setValidationError(null);
+      setPhase("input");
+      setStepIdx(stepIdx + 1);
+    });
+
+    return () => { cancelled = true; };
+  }, [phase === "fetching_models"]);
 
   // Model validation
   useEffect(() => {
@@ -262,6 +327,12 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
       return;
     }
 
+    if (step!.id === "llm_api_base" || step!.id === "openrouter_api_key") {
+      setValidationError(null);
+      setPhase("fetching_models");
+      return;
+    }
+
     if (step!.id === "llm_model") {
       setValidationError(null);
       setPhase("validating");
@@ -288,13 +359,24 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     );
   }
 
+  if (phase === "fetching_models") {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text color={COLOR} bold>
+          Setup ({stepIdx + 1}/{steps.length})
+        </Text>
+        <Text color="yellow">Checking connection and fetching models...</Text>
+      </Box>
+    );
+  }
+
   if (phase === "validating") {
     return (
       <Box flexDirection="column" gap={1}>
         <Text color={COLOR} bold>
           Setup ({stepIdx + 1}/{steps.length})
         </Text>
-        <Text color="yellow">Checking connection and model...</Text>
+        <Text color="yellow">Checking model...</Text>
       </Box>
     );
   }
@@ -339,7 +421,43 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         {step!.placeholder ? <Text dimColor> ({step!.placeholder})</Text> : null}
       </Text>
 
-      {step!.type === "select" && step!.options ? (
+      {isModelAutocomplete ? (() => {
+        const MAX_SHOWN = 5;
+        const clampedIdx = Math.min(highlightIdx, filteredModels.length - 1);
+        const windowStart = Math.max(0, Math.min(clampedIdx - Math.floor(MAX_SHOWN / 2), filteredModels.length - MAX_SHOWN));
+        const visible = filteredModels.slice(windowStart, windowStart + MAX_SHOWN);
+        return (
+          <>
+            <Box>
+              <Text>{modelFilter}</Text>
+              <Text inverse> </Text>
+            </Box>
+            {modelQuery && filteredModels.length > 0 && (
+              <Box flexDirection="column">
+                {windowStart > 0 && <Text dimColor>  ↑ more</Text>}
+                {visible.map((m, i) => {
+                  const realIdx = windowStart + i;
+                  const selected = realIdx === clampedIdx;
+                  return (
+                    <Text key={m} color={selected ? "cyan" : undefined} dimColor={!selected}>
+                      {selected ? "▸ " : "  "}{m}
+                    </Text>
+                  );
+                })}
+                {windowStart + MAX_SHOWN < filteredModels.length && (
+                  <Text dimColor>  ↓ +{filteredModels.length - windowStart - MAX_SHOWN} more</Text>
+                )}
+              </Box>
+            )}
+            {modelQuery && filteredModels.length === 0 && (
+              <Text dimColor>No matches</Text>
+            )}
+            {!modelQuery && (
+              <Text dimColor>{availableModels.length} models available — type to search</Text>
+            )}
+          </>
+        );
+      })() : step!.type === "select" && step!.options ? (
         <Select key={step!.id} options={step!.options} onChange={(val) => advance(val)} />
       ) : (
         <TextInput

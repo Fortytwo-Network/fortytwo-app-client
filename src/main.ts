@@ -2,10 +2,11 @@ import { createHash } from "node:crypto";
 import * as config from "./config.js";
 import { sleep, secondsUntilDeadline, setVerbose, log } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
-import { loadIdentity, resetAccount } from "./identity.js";
+import { loadIdentity, resetAccount, reactivateAccount } from "./identity.js";
 import { judgeChallenge } from "./judging.js";
 import { answerQuery } from "./answering.js";
 import { isLlmBusy } from "./llm.js";
+import { validateModel } from "./setup-logic.js";
 
 export class InsufficientFundsError extends Error {
   constructor(message: string) {
@@ -60,7 +61,7 @@ function launchTask(id: string, label: string, fn: () => Promise<void>): void {
       if (label === "answering") taskStats.answering++;
       else if (label === "judging") taskStats.judging++;
     })
-    .catch((err) => log(`[${id.slice(0, 8)}] Error ${label}: ${err}`))
+    .catch((err) => log(`[${id.slice(0, 8)}] ${label[0].toUpperCase()}${label.slice(1)} failed: ${(err as Error).message ?? err}`))
     .finally(() => inFlight.delete(id));
 }
 
@@ -179,6 +180,18 @@ export async function main(signal?: AbortSignal): Promise<void> {
 
   log(`Bot role: ${role}`);
 
+  const validation = await validateModel({
+    inference_type: cfg.inference_type,
+    llm_api_base: cfg.llm_api_base,
+    openrouter_api_key: cfg.openrouter_api_key,
+    llm_model: cfg.llm_model,
+  });
+  if (!validation.ok) {
+    log(`Model check failed: ${validation.error}`);
+    process.exit(1);
+  }
+  log(`Model OK: ${cfg.llm_model}`);
+
   const client = new FortyTwoClient();
 
   try {
@@ -212,7 +225,15 @@ export async function main(signal?: AbortSignal): Promise<void> {
           log("Account reset complete!");
           continue;
         }
-        log(`Error in polling cycle: ${err}`);
+        const errMsg = (err as Error).message ?? String(err);
+        if (errMsg.toLowerCase().includes("inactive") || errMsg.toLowerCase().includes("deactivated")) {
+          log(`Account deactivated — reactivating...`);
+          await reactivateAccount(client, identity.agent_id, identity.secret);
+          await client.login(identity.agent_id, identity.secret);
+          log("Reactivation complete!");
+          continue;
+        }
+        log(`Error in polling cycle: ${errMsg}`);
       }
 
       if (signal?.aborted) return;
