@@ -15,6 +15,7 @@ vi.mock("../src/config.js", () => ({
 
 vi.mock("../src/llm.js", () => ({
   compareForRegistration: vi.fn().mockResolvedValue(1),
+  getLlmConcurrency: vi.fn().mockReturnValue({ active: 0, max: 5 }),
 }));
 
 vi.mock("../src/utils.js", () => ({
