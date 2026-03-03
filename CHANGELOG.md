@@ -9,10 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.4] - 02.03.2026
 
+### CLI
+- `--version` flag to print version and exit
+
 ### Onboarding
 - Model autocomplete with arrow-key navigation (type to filter, arrows to browse, Enter to select)
 - Fetch available models from provider before model selection step
 - Connection/auth validation when entering API key or local URL
+- Animated loader (Figma-based `∷ ◯ □ ‖ ■ ●` sequence) during registration and validation steps
 
 ### Reliability
 - Account reactivation on "inactive/deactivated" errors (preserves balance and rank)
