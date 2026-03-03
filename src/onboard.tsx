@@ -10,6 +10,7 @@ import {
 import { FortyTwoClient } from "./api-client.js";
 import { registerAgent, saveIdentity } from "./identity.js";
 import { validateModel, fetchModels, buildConfig } from "./setup-logic.js";
+import { useLoader } from "./loader.js";
 
 const COLOR = "rgb(42, 42, 242)";
 
@@ -108,6 +109,9 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState("");
   const [highlightIdx, setHighlightIdx] = useState(-1);
+
+  const isLoading = phase !== "input";
+  const loader = useLoader(isLoading);
 
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
@@ -354,7 +358,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         <Text color={COLOR} bold>
           Setup ({stepIdx + 1}/{steps.length})
         </Text>
-        <Text color="yellow">Checking credentials...</Text>
+        <Text color="yellow">{loader} Checking credentials...</Text>
       </Box>
     );
   }
@@ -365,7 +369,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         <Text color={COLOR} bold>
           Setup ({stepIdx + 1}/{steps.length})
         </Text>
-        <Text color="yellow">Checking connection and fetching models...</Text>
+        <Text color="yellow">{loader} Checking connection and fetching models...</Text>
       </Box>
     );
   }
@@ -376,7 +380,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         <Text color={COLOR} bold>
           Setup ({stepIdx + 1}/{steps.length})
         </Text>
-        <Text color="yellow">Checking model...</Text>
+        <Text color="yellow">{loader} Checking model...</Text>
       </Box>
     );
   }
@@ -389,14 +393,14 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     return (
       <Box flexDirection="column" gap={1}>
         <Text color={COLOR} bold>{header}</Text>
-        {regLog.length === 0 && <Text color="yellow">Starting registration...</Text>}
+        {regLog.length === 0 && <Text color="yellow">{loader} Starting registration...</Text>}
         <Box flexDirection="column">
           {regLog.map((line, i) => {
             const isCurrent = i === last;
             const text = displayLine(line);
             return (
               <Text key={i} color={isCurrent ? "yellow" : undefined} dimColor={!isCurrent}>
-                {isCurrent ? "▸ " : "  "}{text}
+                {isCurrent ? `${loader} ` : "  "}{text}
               </Text>
             );
           })}
