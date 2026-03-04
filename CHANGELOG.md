@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Error handling
+- Actionable error messages for local inference failures (server not running, model not loaded, timeout)
+
 ## [0.1.4] - 02.03.2026
 
 ### CLI

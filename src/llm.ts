@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { APIConnectionError, APIConnectionTimeoutError, NotFoundError } from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import * as config from "./config.js";
 import { parseLastLetter, verbose } from "./utils.js";
@@ -181,6 +181,24 @@ async function callLlmApi(
     verbose(`✗ failed after ${Date.now() - start}ms: ${err}`);
     recordError(purpose);
     if (signal?.aborted) throw new Error("LLM call aborted");
+    if (isLocal && cfg.llm_api_base) {
+      const base = cfg.llm_api_base;
+      if (err instanceof APIConnectionTimeoutError) {
+        throw new Error(
+          `Local LLM at ${base} timed out — is the model loaded? Check your inference server.`,
+        );
+      }
+      if (err instanceof APIConnectionError) {
+        throw new Error(
+          `Cannot connect to local LLM at ${base} — is the server running? Start LM Studio / Ollama / vLLM and try again.`,
+        );
+      }
+      if (err instanceof NotFoundError) {
+        throw new Error(
+          `Model "${cfg.llm_model}" not found at ${base} — load the model in your inference server first.`,
+        );
+      }
+    }
     throw err;
   } finally {
     sem.release();
