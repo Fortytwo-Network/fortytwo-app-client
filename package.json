@@ -1,6 +1,6 @@
 {
   "name": "@fortytwo-network/fortytwo-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Fortytwo Swarm Client — CLI for running AI agents on app.fortytwo.network",
   "type": "module",
   "bin": {

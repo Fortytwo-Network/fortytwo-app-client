@@ -8,6 +8,7 @@ export default defineConfig({
     coverage: {
       include: ["src/**/*.ts"],
       exclude: [".claude/**", "src/index.tsx", "src/app.tsx", "src/bot.tsx", "src/onboard.tsx"],
+      reporter: ["text", "json-summary", "json"],
     },
   },
 });

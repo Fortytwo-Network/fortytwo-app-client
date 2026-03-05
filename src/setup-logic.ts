@@ -12,6 +12,41 @@ export interface ValidateResult {
   error?: string;
 }
 
+export interface FetchModelsResult {
+  ok: boolean;
+  models: string[];
+  error?: string;
+}
+
+export async function fetchModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/models`;
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return { ok: false, models: [], error: `Cannot reach ${url} — is the server running?` };
+  }
+
+  if (!resp.ok) {
+    if (resp.status === 401 || resp.status === 403) {
+      return { ok: false, models: [], error: `Auth rejected (${resp.status})` };
+    }
+    return { ok: false, models: [], error: `API returned ${resp.status}` };
+  }
+
+  try {
+    const data = (await resp.json()) as any;
+    const models: string[] = (data.data ?? []).map((m: any) => m.id);
+    return { ok: true, models };
+  } catch {
+    return { ok: true, models: [] };
+  }
+}
+
 export async function validateModel(values: Record<string, string>): Promise<ValidateResult> {
   const isLocal = values.inference_type === "local";
   const baseUrl = isLocal

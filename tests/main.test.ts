@@ -55,6 +55,10 @@ vi.mock("../src/llm.js", () => ({
   isLlmBusy: vi.fn().mockReturnValue(false),
 }));
 
+vi.mock("../src/setup-logic.js", () => ({
+  validateModel: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
 vi.mock("../src/utils.js", () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
   secondsUntilDeadline: vi.fn().mockReturnValue(600),

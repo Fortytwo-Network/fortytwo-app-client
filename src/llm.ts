@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { APIConnectionError, APIConnectionTimeoutError, NotFoundError } from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import * as config from "./config.js";
 import { parseLastLetter, verbose } from "./utils.js";
@@ -38,18 +38,32 @@ class Semaphore {
   queuedCount(): number {
     return this.queue.length;
   }
+
+  maxCount(): number {
+    return this.max;
+  }
 }
 
 let semaphore: Semaphore | null = null;
 
 function getSemaphore(): Semaphore {
   const cfg = config.get();
-  if (!semaphore) semaphore = new Semaphore(cfg.llm_concurrency);
+  if (!semaphore) {
+    const max = cfg.inference_type === "local"
+      ? Math.max(1, Math.floor(cfg.llm_concurrency / 5))
+      : cfg.llm_concurrency;
+    semaphore = new Semaphore(max);
+  }
   return semaphore;
 }
 
 export function isLlmBusy(): boolean {
   return (semaphore?.queuedCount() ?? 0) > 0;
+}
+
+export function getLlmConcurrency(): { active: number; max: number } {
+  const sem = semaphore;
+  return { active: sem?.activeCount() ?? 0, max: sem?.maxCount() ?? 0 };
 }
 
 export function resetLlmClient(): void {
@@ -167,6 +181,24 @@ async function callLlmApi(
     verbose(`✗ failed after ${Date.now() - start}ms: ${err}`);
     recordError(purpose);
     if (signal?.aborted) throw new Error("LLM call aborted");
+    if (isLocal && cfg.llm_api_base) {
+      const base = cfg.llm_api_base;
+      if (err instanceof APIConnectionTimeoutError) {
+        throw new Error(
+          `Local LLM at ${base} timed out — is the model loaded? Check your inference server.`,
+        );
+      }
+      if (err instanceof APIConnectionError) {
+        throw new Error(
+          `Cannot connect to local LLM at ${base} — is the server running? Start LM Studio / Ollama / vLLM and try again.`,
+        );
+      }
+      if (err instanceof NotFoundError) {
+        throw new Error(
+          `Model "${cfg.llm_model}" not found at ${base} — load the model in your inference server first.`,
+        );
+      }
+    }
     throw err;
   } finally {
     sem.release();

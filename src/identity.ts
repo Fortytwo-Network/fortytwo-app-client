@@ -54,11 +54,11 @@ interface ChallengeResponse {
 
 async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<ChallengeResponse[]> {
   const total = challenges.length;
+  let compared = 0;
   let solved = 0;
   const concurrency = config.get().llm_concurrency;
 
   // Phase 1: Run forward (a,b) + inverse (b,a) concurrently for all challenges
-  // Per-challenge timeout to avoid hanging on a single slow LLM call
   const CHALLENGE_TIMEOUT = 120_000; // 2 min per challenge
 
   const pairResults = await mapWithConcurrency(
@@ -73,13 +73,16 @@ async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<Cha
           llm.compareForRegistration(ch.question, ch.option_b, ch.option_a, controller.signal),
         ]);
         const result = forward + -inverse;
-        solved++;
-        log(`~Solving: ${solved}/${total}`);
+        compared++;
+        if (result !== 0) solved++;
+        const { active, max } = llm.getLlmConcurrency();
+        log(`~Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
         return [idx, ch, result];
       } catch {
-        solved++;
-        log(`~Solving: ${solved}/${total} (${idx + 1} timed out)`);
-        return [idx, ch, 0]; // tie on timeout → will go to tiebreak or random
+        compared++;
+        const { active, max } = llm.getLlmConcurrency();
+        log(`~Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
+        return [idx, ch, 0];
       } finally {
         clearTimeout(timeout);
       }
@@ -119,6 +122,9 @@ async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<Cha
     else choice = Math.random() < 0.5 ? 0 : 1;
 
     responses.set(idx, { challenge_id: String(ch.id), choice });
+    solved++;
+    const { active, max } = llm.getLlmConcurrency();
+    log(`~Solving: ${solved}/${total} [LLM ${active}/${max}]`);
   }
 
   // Return in original order
@@ -174,6 +180,46 @@ export async function registerAgent(
     } catch (err) {
       log(`Attempt ${attempt} error: ${err}. Retrying in 5s...`);
       await sleep(5000);
+    }
+  }
+}
+
+export async function reactivateAccount(
+  client: FortyTwoClient,
+  agentId: string,
+  secret: string,
+  log: LogFn = console.log,
+): Promise<void> {
+  let attempt = 0;
+
+  while (true) {
+    attempt++;
+    log(`Reactivation attempt ${attempt}...`);
+
+    try {
+      const challengeData = await client.startReactivation(agentId, secret);
+      const sessionId = challengeData.challenge_session_id as string;
+      const challenges = challengeData.challenges as Challenge[];
+      const requiredCorrect = (challengeData.required_correct as number) ?? 17;
+
+      log(`~Solving: 0/${challenges.length}`);
+
+      const responses = await solveChallenges(challenges, log);
+      log(`Submitting answers (need ${requiredCorrect} correct)...`);
+      const result = await client.completeReactivation(sessionId, responses);
+
+      if (!result.passed) {
+        const correct = result.correct_count ?? 0;
+        log(`Failed: ${correct}/${challenges.length} correct. Retrying...`);
+        await sleep(5000);
+        continue;
+      }
+
+      log(`Reactivation successful! (attempt ${attempt})`);
+      return;
+    } catch (err) {
+      log(`Reactivation attempt ${attempt} error: ${err}. Retrying in 10s...`);
+      await sleep(10_000);
     }
   }
 }
