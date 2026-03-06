@@ -64,6 +64,7 @@ vi.mock("../src/utils.js", () => ({
   secondsUntilDeadline: vi.fn().mockReturnValue(600),
   setVerbose: vi.fn(),
   log: vi.fn(),
+  getRoleLabel: vi.fn((v) => v),
 }));
 
 import {
