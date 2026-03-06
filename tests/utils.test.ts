@@ -11,6 +11,9 @@ import {
   unpinTask,
   getPinnedTasks,
   mapWithConcurrency,
+  getRoleLabel,
+  formatNumber,
+  truncateName,
 } from "../src/utils.js";
 
 describe("secondsUntilDeadline", () => {
@@ -186,5 +189,74 @@ describe("mapWithConcurrency", () => {
   it("handles limit of 0 or negative", async () => {
     const results = await mapWithConcurrency([1, 2], 0, async (x) => x);
     expect(results).toEqual([1, 2]);
+  });
+});
+
+describe("getRoleLabel", () => {
+  it("returns human-readable label for onboard context", () => {
+    expect(getRoleLabel("ANSWERER_AND_JUDGE", "onboard")).toBe("ANSWERER & JUDGE — both");
+    expect(getRoleLabel("JUDGE", "onboard")).toBe("JUDGE — only judge challenges");
+    expect(getRoleLabel("ANSWERER", "onboard")).toBe("ANSWERER — only answer queries");
+  });
+
+  it("returns short display name for bot context", () => {
+    expect(getRoleLabel("ANSWERER_AND_JUDGE", "bot")).toBe("ANSWERER & JUDGE");
+    expect(getRoleLabel("JUDGE", "bot")).toBe("JUDGE");
+    expect(getRoleLabel("ANSWERER", "bot")).toBe("ANSWERER");
+  });
+
+  it("defaults to bot context", () => {
+    expect(getRoleLabel("JUDGE")).toBe("JUDGE");
+  });
+
+  it("returns identity if value not found", () => {
+    expect(getRoleLabel("UNKNOWN")).toBe("UNKNOWN");
+  });
+});
+
+describe("formatNumber", () => {
+  it("formats small numbers correctly", () => {
+    expect(formatNumber(123)).toBe("123");
+    expect(formatNumber(123.45)).toBe("123.45");
+    expect(formatNumber(123.45678, 2)).toBe("123.45");
+  });
+
+  it("adds commas for thousands", () => {
+    expect(formatNumber(1234)).toBe("1,234");
+    expect(formatNumber(1234567)).toBe("1.234M");
+  });
+
+  it("uses suffixes for large numbers", () => {
+    expect(formatNumber(1000000)).toBe("1M");
+    expect(formatNumber(1500000)).toBe("1.5M");
+    expect(formatNumber(1000000000)).toBe("1B");
+  });
+
+  it("handles negative numbers", () => {
+    expect(formatNumber(-123.45)).toBe("-123.45");
+    expect(formatNumber(-1000000)).toBe("-1M");
+  });
+
+  it("handles string input", () => {
+    expect(formatNumber("123.45")).toBe("123.45");
+  });
+
+  it("returns '0' for invalid input", () => {
+    expect(formatNumber("abc")).toBe("0");
+  });
+});
+
+describe("truncateName", () => {
+  it("does not truncate short names", () => {
+    expect(truncateName("Short Name")).toBe("Short Name");
+  });
+
+  it("truncates long names", () => {
+    expect(truncateName("This is a very long name that should be truncated", 10)).toBe("This is a ...");
+  });
+
+  it("uses default limit of 33", () => {
+    const longName = "A".repeat(40);
+    expect(truncateName(longName)).toBe("A".repeat(33) + "...");
   });
 });
