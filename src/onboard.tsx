@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
-import { TextInput, Select } from "@inkjs/ui";
+import { TextInput, Select, ThemeProvider, extendTheme, defaultTheme } from "@inkjs/ui";
 import {
   saveConfig,
   reloadConfig,
@@ -11,8 +11,8 @@ import { FortyTwoClient } from "./api-client.js";
 import { registerAgent, saveIdentity } from "./identity.js";
 import { validateModel, fetchModels, buildConfig } from "./setup-logic.js";
 import { useLoader } from "./loader.js";
-
-const COLOR = "rgb(42, 42, 242)";
+import { COLORS, ROLE_OPTIONS } from "./constants.js";
+import { getRoleLabel } from "./utils.js";
 
 type StepId =
   | "setup_mode"
@@ -34,6 +34,19 @@ interface StepDef {
   options?: { label: string; value: string }[];
 }
 
+const selectTheme = extendTheme(defaultTheme, {
+  components: {
+    Select: {
+      styles: {
+        focusIndicator: () => ({ color: COLORS.WHITE }),
+        label: ({ isFocused }: { isFocused: boolean }) => ({
+          color: isFocused ? COLORS.BLUE_CONTENT : undefined,
+        }),
+      },
+    },
+  },
+});
+
 const SETUP_MODE_OPTIONS = [
   { label: "Register new agent", value: "new" },
   { label: "Import existing agent", value: "import" },
@@ -42,12 +55,6 @@ const SETUP_MODE_OPTIONS = [
 const INFERENCE_OPTIONS = [
   { label: "OpenRouter", value: "openrouter" },
   { label: "Local inference", value: "local" },
-];
-
-const ROLE_OPTIONS = [
-  { label: "ANSWERER_AND_JUDGE — both", value: "ANSWERER_AND_JUDGE" },
-  { label: "JUDGE — only judge challenges", value: "JUDGE" },
-  { label: "ANSWERER — only answer queries", value: "ANSWERER" },
 ];
 
 function buildSteps(inferenceType?: InferenceType, setupMode?: string): StepDef[] {
@@ -87,6 +94,7 @@ function displayValue(key: string, value: string): string {
   if (key === "openrouter_api_key" || key === "agent_secret") return "***";
   if (key === "setup_mode") return value === "import" ? "Import existing" : "Register new";
   if (key === "inference_type") return value === "local" ? "Local inference" : "OpenRouter";
+  if (key === "bot_role") return getRoleLabel(value, "onboard");
   return value;
 }
 
@@ -185,7 +193,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
           return rest;
         });
         setStepIdx(agentIdIdx >= 0 ? agentIdIdx : stepIdx);
-        setValidationError(`Invalid credentials: ${err}`);
+        setValidationError(`✕ Invalid credentials: ${err}`);
         setPhase("input");
       }
     })();
@@ -205,7 +213,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     fetchModels(baseUrl, apiKey).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
-        setValidationError(result.error ?? "Cannot reach server");
+        setValidationError(`✕ ${result.error ?? "Cannot reach server"}`);
         setPhase("input");
         return;
       }
@@ -230,7 +238,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         setPhase("input");
         setStepIdx(stepIdx + 1);
       } else {
-        setValidationError(result.error ?? "Validation failed");
+        setValidationError(`✕ ${result.error ?? "Validation failed"}`);
         setPhase("input");
       }
     });
@@ -247,7 +255,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     (async () => {
       try {
         if (!skipToRegistration) {
-          setRegLog(["Saving config..."]);
+          setRegLog(["↳ Saving config..."]);
           const cfg = buildConfig(values);
           saveConfig(cfg);
           reloadConfig();
@@ -291,7 +299,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
 
     (async () => {
       try {
-        setRegLog(["Saving config..."]);
+        setRegLog(["↳ Saving config..."]);
         const cfg = buildConfig(values);
         saveConfig(cfg);
         reloadConfig();
@@ -302,7 +310,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         });
 
         const name = values._display_name || values.agent_id;
-        setRegLog((prev) => [...prev, `Agent "${name}" (${values.agent_id}) imported!`]);
+        setRegLog((prev) => [...prev, `✓ Agent "${name}" (${values.agent_id}) imported!`]);
         onDone();
       } catch (err) {
         if (cancelled) return;
@@ -355,10 +363,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "validating_creds") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>
-          Setup ({stepIdx + 1}/{steps.length})
+        <Text>
+          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
         </Text>
-        <Text color="yellow">{loader} Checking credentials...</Text>
+        <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking credentials...</Text>
       </Box>
     );
   }
@@ -366,10 +374,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "fetching_models") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>
-          Setup ({stepIdx + 1}/{steps.length})
+        <Text>
+          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
         </Text>
-        <Text color="yellow">{loader} Checking connection and fetching models...</Text>
+        <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking connection and fetching models...</Text>
       </Box>
     );
   }
@@ -377,10 +385,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "validating") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>
-          Setup ({stepIdx + 1}/{steps.length})
+        <Text>
+          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
         </Text>
-        <Text color="yellow">{loader} Checking model...</Text>
+        <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking model...</Text>
       </Box>
     );
   }
@@ -388,41 +396,41 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "registering" || phase === "importing") {
     const displayLine = (line: string) => line.replace(/^\[progress]/, "");
     const last = regLog.length - 1;
-    const header = phase === "importing" ? "Import Agent" : "Registration";
+    const header = phase === "importing" ? "IMPORT AGENT" : "REGISTRATION";
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>{header}</Text>
-        {regLog.length === 0 && <Text color="yellow">{loader} Starting registration...</Text>}
+        <Text bold>▒▓░ {header} ░▓▒</Text>
+        {regLog.length === 0 && <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> ⎔ Registering Agent...</Text>}
         <Box flexDirection="column">
           {regLog.map((line, i) => {
             const isCurrent = i === last;
             const text = displayLine(line);
             return (
-              <Text key={i} color={isCurrent ? "yellow" : undefined} dimColor={!isCurrent}>
-                {isCurrent ? `${loader} ` : "  "}{text}
+              <Text key={i} color={isCurrent ? undefined : COLORS.GREY_NEUTRAL}>
+                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "  "}{text}
               </Text>
             );
           })}
         </Box>
-        {regError && <Text color="red">{regError}</Text>}
+        {regError && <Text color={COLORS.RED}>✕ ERROR: {regError}</Text>}
       </Box>
     );
   }
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Text color={COLOR} bold>
-        Setup ({stepIdx + 1}/{steps.length})
+      <Text>
+        STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
       </Text>
 
       {validationError && (
-        <Text color="red">{validationError}</Text>
+        <Text color={COLORS.RED}>{validationError}</Text>
       )}
 
       <Text>
         {step!.label}
-        {step!.placeholder ? <Text dimColor> ({step!.placeholder})</Text> : null}
+        {step!.placeholder ? <Text color={COLORS.GREY_NEUTRAL}> ({step!.placeholder})</Text> : null}
       </Text>
 
       {isModelAutocomplete ? (() => {
@@ -433,49 +441,55 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         return (
           <>
             <Box>
+              <Text color={COLORS.BLUE_FRAME} bold>❯ </Text>
               <Text>{modelFilter}</Text>
               <Text inverse> </Text>
             </Box>
             {modelQuery && filteredModels.length > 0 && (
               <Box flexDirection="column">
-                {windowStart > 0 && <Text dimColor>  ↑ more</Text>}
+                {windowStart > 0 && <Text color={COLORS.GREY_NEUTRAL}>  ↑ more</Text>}
                 {visible.map((m, i) => {
                   const realIdx = windowStart + i;
                   const selected = realIdx === clampedIdx;
                   return (
-                    <Text key={m} color={selected ? "cyan" : undefined} dimColor={!selected}>
+                    <Text key={m} color={selected ? COLORS.BLUE_FRAME : COLORS.GREY_NEUTRAL}>
                       {selected ? "▸ " : "  "}{m}
                     </Text>
                   );
                 })}
                 {windowStart + MAX_SHOWN < filteredModels.length && (
-                  <Text dimColor>  ↓ +{filteredModels.length - windowStart - MAX_SHOWN} more</Text>
+                  <Text color={COLORS.GREY_NEUTRAL}>  ↓ +{filteredModels.length - windowStart - MAX_SHOWN} more</Text>
                 )}
               </Box>
             )}
             {modelQuery && filteredModels.length === 0 && (
-              <Text dimColor>No matches</Text>
+              <Text color={COLORS.GREY_NEUTRAL}>No matches</Text>
             )}
             {!modelQuery && (
-              <Text dimColor>{availableModels.length} models available — type to search</Text>
+              <Text color={COLORS.GREY_NEUTRAL}>{availableModels.length} models available — type to search</Text>
             )}
           </>
         );
       })() : step!.type === "select" && step!.options ? (
-        <Select key={step!.id} options={step!.options} onChange={(val) => advance(val)} />
+        <ThemeProvider theme={selectTheme}>
+          <Select key={step!.id} options={step!.options} onChange={(val) => advance(val)} />
+        </ThemeProvider>
       ) : (
-        <TextInput
-          key={step!.id}
-          placeholder={step!.placeholder ?? ""}
-          onSubmit={(val) => advance(val)}
-        />
+        <Box>
+          <Text color={COLORS.BLUE_FRAME} bold>❯ </Text>
+          <TextInput
+            key={step!.id}
+            placeholder={step!.placeholder ?? ""}
+            onSubmit={(val) => advance(val)}
+          />
+        </Box>
       )}
 
       {Object.keys(values).length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>─── configured ───</Text>
+          <Text color={COLORS.GREY_NEUTRAL}>─── configured ───</Text>
           {Object.entries(values).map(([k, v]) => (
-            <Text key={k} dimColor>
+            <Text key={k} color={COLORS.GREY_NEUTRAL}>
               {k}: {displayValue(k, v)}
             </Text>
           ))}
