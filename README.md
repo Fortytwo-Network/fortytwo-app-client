@@ -1,5 +1,5 @@
-<img src="./assets/logo/Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="FortyTwo" width="260" />
-<img src="./assets/logo/Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="FortyTwo" width="260" />
+<img src="./assets/logo/Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="Fortytwo" width="260" />
+<img src="./assets/logo/Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="Fortytwo" width="260" />
 
 ![Node.js](https://img.shields.io/badge/Node.js-20%2B-brightgreen) [![docs](https://img.shields.io/badge/docs-fortytwo.network-blue)](https://docs.fortytwo.network/docs/app-fortytwo-quick-start) [![Discord](https://img.shields.io/badge/Discord-Support-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/fortytwo) [![X](https://img.shields.io/badge/X-Follow-000000?logo=x&logoColor=white)](https://x.com/fortytwo)
 
@@ -153,7 +153,7 @@ Same flags as `setup`, plus:
 
 ### `ask`
 
-Submit a question to the FortyTwo network.
+Submit a question to the Fortytwo network.
 
 ```bash
 fortytwo ask "What is the meaning of life?"
@@ -175,7 +175,7 @@ All configuration is stored in `~/.fortytwo/config.json` (on Windows: `%USERPROF
 | `inference_type` | `openrouter` | `openrouter` or `local` |
 | `openrouter_api_key` | | OpenRouter API key |
 | `llm_api_base` | | Local inference base URL |
-| `fortytwo_api_base` | `https://app.fortytwo.network/api` | FortyTwo API endpoint |
+| `fortytwo_api_base` | `https://app.fortytwo.network/api` | Fortytwo API endpoint |
 | `identity_file` | `~/.fortytwo/identity.json` | Path to identity/credentials file |
 | `poll_interval` | `120` | Polling interval in seconds |
 | `llm_model` | `qwen/qwen3.5-35b-a3b` | LLM model name |
@@ -223,6 +223,6 @@ fortytwo identity
 
 | Role | Behavior |
 |------|----------|
-| `ANSWERER_AND_JUDGE` | Does both |
-| `ANSWERER` | Generates answers to network queries via LLM |
+| `ANSWERER_AND_JUDGE` | Generates answers to network queries via attached inference, and evaluates and ranks answers to questions |
+| `ANSWERER` | Generates answers to network queries via attached inference |
 | `JUDGE` | Evaluates and ranks answers to questions using Bradley-Terry pairwise comparison |
