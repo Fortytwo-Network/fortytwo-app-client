@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useFocusManager } from "ink";
 import { TextInput, Select, ThemeProvider, extendTheme, defaultTheme } from "@inkjs/ui";
 import {
   saveConfig,
@@ -116,10 +116,17 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   const [regError, setRegError] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState("");
-  const [highlightIdx, setHighlightIdx] = useState(-1);
+
+  const { focusNext } = useFocusManager();
 
   const isLoading = phase !== "input";
   const loader = useLoader(isLoading);
+
+  useEffect(() => {
+    if (phase === "input") {
+      focusNext();
+    }
+  }, [phase]);
 
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
@@ -131,36 +138,6 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     ? availableModels.filter((m) => m.toLowerCase().includes(modelQuery))
     : [];
   const isModelAutocomplete = phase === "input" && step?.id === "llm_model" && availableModels.length > 0;
-
-  useInput((input, key) => {
-    if (key.downArrow) {
-      setHighlightIdx((prev) => Math.min(prev + 1, filteredModels.length - 1));
-    } else if (key.upArrow) {
-      setHighlightIdx((prev) => Math.max(prev - 1, -1));
-    } else if (key.return) {
-      if (highlightIdx >= 0 && highlightIdx < filteredModels.length) {
-        advance(filteredModels[highlightIdx]);
-        return;
-      }
-      const val = modelFilter;
-      const exact = availableModels.find((m) => m === val);
-      if (exact) { advance(val); return; }
-      if (filteredModels.length === 1) { advance(filteredModels[0]); return; }
-      if (!val) {
-        setValidationError("Type a model name to search");
-      } else if (filteredModels.length === 0) {
-        setValidationError(`No models matching "${val}"`);
-      } else {
-        setValidationError(`${filteredModels.length} matches — use arrows to select`);
-      }
-    } else if (key.backspace || key.delete) {
-      setModelFilter((prev) => prev.slice(0, -1));
-      setHighlightIdx(-1);
-    } else if (input && !key.ctrl && !key.meta) {
-      setModelFilter((prev) => prev + input);
-      setHighlightIdx(-1);
-    }
-  }, { isActive: isModelAutocomplete });
 
   // Credentials validation (import flow)
   useEffect(() => {
@@ -435,30 +412,43 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
 
       {isModelAutocomplete ? (() => {
         const MAX_SHOWN = 5;
-        const clampedIdx = Math.min(highlightIdx, filteredModels.length - 1);
-        const windowStart = Math.max(0, Math.min(clampedIdx - Math.floor(MAX_SHOWN / 2), filteredModels.length - MAX_SHOWN));
-        const visible = filteredModels.slice(windowStart, windowStart + MAX_SHOWN);
+        const visible = filteredModels.slice(0, MAX_SHOWN);
         return (
           <>
             <Box>
               <Text color={COLORS.BLUE_FRAME} bold>❯ </Text>
-              <Text>{modelFilter}</Text>
-              <Text inverse> </Text>
+              <TextInput
+                key="llm_model_autocomplete"
+                placeholder={step!.placeholder ?? ""}
+                suggestions={availableModels}
+                onChange={(val) => {
+                  if (val === modelFilter) return;
+                  setModelFilter(val);
+                  setValidationError(null);
+                }}
+                onSubmit={(val) => {
+                  const exact = availableModels.find((m) => m === val);
+                  if (exact) { advance(val); return; }
+                  const query = val.toLowerCase();
+                  const matches = query ? availableModels.filter((m) => m.toLowerCase().includes(query)) : [];
+                  if (matches.length === 1) { advance(matches[0]); return; }
+                  if (!val) {
+                    setValidationError("Type a model name to search");
+                  } else if (matches.length === 0) {
+                    setValidationError(`No models matching "${val}"`);
+                  } else {
+                    setValidationError(`${matches.length} matches — narrow your search`);
+                  }
+                }}
+              />
             </Box>
             {modelQuery && filteredModels.length > 0 && (
               <Box flexDirection="column">
-                {windowStart > 0 && <Text color={COLORS.GREY_NEUTRAL}>  ↑ more</Text>}
-                {visible.map((m, i) => {
-                  const realIdx = windowStart + i;
-                  const selected = realIdx === clampedIdx;
-                  return (
-                    <Text key={m} color={selected ? COLORS.BLUE_FRAME : COLORS.GREY_NEUTRAL}>
-                      {selected ? "▸ " : "  "}{m}
-                    </Text>
-                  );
-                })}
-                {windowStart + MAX_SHOWN < filteredModels.length && (
-                  <Text color={COLORS.GREY_NEUTRAL}>  ↓ +{filteredModels.length - windowStart - MAX_SHOWN} more</Text>
+                {visible.map((m) => (
+                  <Text key={m} color={COLORS.GREY_NEUTRAL}>  {m}</Text>
+                ))}
+                {filteredModels.length > MAX_SHOWN && (
+                  <Text color={COLORS.GREY_NEUTRAL}>  +{filteredModels.length - MAX_SHOWN} more</Text>
                 )}
               </Box>
             )}
