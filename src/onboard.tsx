@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Box, Text, useFocusManager } from "ink";
+import { Box, Text, useInput } from "ink";
 import { TextInput, Select, ThemeProvider, extendTheme, defaultTheme } from "@inkjs/ui";
 import {
   saveConfig,
@@ -117,16 +117,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState("");
 
-  const { focusNext } = useFocusManager();
-
   const isLoading = phase !== "input";
   const loader = useLoader(isLoading);
 
-  useEffect(() => {
-    if (phase === "input") {
-      focusNext();
-    }
-  }, [phase]);
+  useInput(() => {}, { isActive: true });
 
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
