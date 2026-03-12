@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import * as config from "./config.js";
-import { sleep, secondsUntilDeadline, setVerbose, log } from "./utils.js";
+import { sleep, secondsUntilDeadline, setVerbose, log, getRoleLabel } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import { loadIdentity, resetAccount, reactivateAccount } from "./identity.js";
 import { judgeChallenge } from "./judging.js";
@@ -87,13 +87,13 @@ export async function processChallenges(client: FortyTwoClient, dualMode = false
     const effectiveDeadline = (ch.effective_voting_deadline ?? ch.judging_deadline_at ?? "") as string;
     const remaining = secondsUntilDeadline(effectiveDeadline);
     if (remaining > 0 && remaining < config.MIN_DEADLINE_SECONDS) {
-      log(`[${String(ch.id).slice(0, 8)}] Skipping: only ${Math.round(remaining)}s until deadline`);
+      log(`[${String(ch.id).slice(0, 8)}] ↳ Skipping: only ${Math.round(remaining)}s until deadline`);
       return false;
     }
     return true;
   });
 
-  log(`Found ${challenges.length} pending challenges (${eligible.length} eligible, ${inFlight.size} in-flight)`);
+  log(`↳ Found ${challenges.length} pending challenges (${eligible.length} eligible, ${inFlight.size} in-flight)`);
 
   for (const ch of eligible) {
     const challengeId = String(ch.id);
@@ -128,7 +128,7 @@ export async function processQueries(client: FortyTwoClient, dualMode = false): 
     return true;
   });
 
-  log(`Found ${queries.length} active queries (${eligible.length} eligible, ${inFlight.size} in-flight)`);
+  log(`↳ Found ${queries.length} active queries (${eligible.length} eligible, ${inFlight.size} in-flight)`);
 
   for (const q of eligible) {
     launchTask(String(q.id), "answering", () =>
@@ -178,7 +178,7 @@ export async function main(signal?: AbortSignal): Promise<void> {
     process.exit(1);
   }
 
-  log(`Bot role: ${role}`);
+  log(`↳ Bot role: ${getRoleLabel(role)}`);
 
   const validation = await validateModel({
     inference_type: cfg.inference_type,
@@ -190,7 +190,7 @@ export async function main(signal?: AbortSignal): Promise<void> {
     log(`Model check failed: ${validation.error}`);
     process.exit(1);
   }
-  log(`Model OK: ${cfg.llm_model}`);
+  log(`✓ Model OK: ${cfg.llm_model}`);
 
   const client = new FortyTwoClient();
 
@@ -204,7 +204,7 @@ export async function main(signal?: AbortSignal): Promise<void> {
 
     await client.login(identity.agent_id, identity.secret);
 
-    log(`Starting polling loop (interval: ${cfg.poll_interval}s)`);
+    log(`✓ Starting polling loop (interval: ${cfg.poll_interval}s)`);
     while (!signal?.aborted) {
       const cycleStart = Date.now();
       try {

@@ -2,19 +2,23 @@ import { useState } from "react";
 import { Box, Text } from "ink";
 import { configExists, reloadConfig, get as getConfig } from "./config.js";
 import { loadIdentity } from "./identity.js";
+import { COLORS } from "./constants.js";
 import Onboard from "./onboard.js";
 import BotScreen from "./bot.js";
 
-const banner = [
-  "███████╗ ██████╗ ██████╗ ████████╗██╗   ██╗████████╗██╗    ██╗ ██████╗ ",
-  "██╔════╝██╔═══██╗██╔══██╗╚══██╔══╝╚██╗ ██╔╝╚══██╔══╝██║    ██║██╔═══██╗",
-  "█████╗  ██║   ██║██████╔╝   ██║    ╚████╔╝    ██║   ██║ █╗ ██║██║   ██║",
-  "██╔══╝  ██║   ██║██╔══██╗   ██║     ╚██╔╝     ██║   ██║███╗██║██║   ██║",
-  "██║     ╚██████╔╝██║  ██║   ██║      ██║      ██║   ╚███╔███╔╝╚██████╔╝",
-  "╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝      ╚═╝      ╚═╝    ╚══╝╚══╝  ╚═════╝ ",
+const LOGO = [
+  "    ▒█████░      ▒█████░     █████████░   █████████░",
+  "   ▓███████▓    ▓███████▓    █████████░   █████████░",
+  "  ░█████████░  ░█████████░   █████████░   █████████░",
+  "   ▓███████▓    ▓███████▓    █████████░   █████████░",
+  "    ▒█████░      ▒█████░     █████████░   █████████░",
+  "                             █████████░   █████████░",
+  "    ▒█████░      ▒█████░     █████████░   █████████░",
+  "   ▓███████▓    ▓███████▓    █████████░   █████████░",
+  "  ░█████████░  ░█████████░   █████████░   █████████░",
+  "   ▓███████▓    ▓███████▓    █████████░   █████████░",
+  "    ▒█████░      ▒█████░     █████████░   █████████░",
 ];
-
-const COLOR = "rgb(42, 42, 242)";
 
 type Screen = "onboard" | "register" | "running";
 
@@ -29,14 +33,16 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>(getInitialScreen);
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column">
       {screen !== "running" && (
         <Box flexDirection="column">
-          {banner.map((line, i) => (
-            <Text key={i} color={COLOR} bold>
-              {line}
-            </Text>
+          <Text color={COLORS.BLUE_FRAME} bold>╔═════════ <Text color={COLORS.WHITE} bold>WELCOME TO</Text> <Text color={COLORS.BLUE_CONTENT} bold>FORTYTWO</Text><Text color={COLORS.WHITE} bold>, SWARM AGENT</Text></Text>
+          <Text color={COLORS.BLUE_FRAME} bold>║</Text>
+          {LOGO.map((line, i) => (
+            <Text key={i}><Text color={COLORS.BLUE_FRAME} bold>║</Text> {line}</Text>
           ))}
+          <Text color={COLORS.BLUE_FRAME} bold>║</Text>
+          <Text color={COLORS.BLUE_FRAME} bold>╚═════════ <Text color={COLORS.WHITE} bold>ONBOARDING</Text></Text>
         </Box>
       )}
 

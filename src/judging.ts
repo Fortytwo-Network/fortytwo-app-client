@@ -102,7 +102,7 @@ export async function judgeChallenge(
     const estimatedTime = estimateLlmTime(answerCountHint);
     const estimatedTotal = estimatedTime + 30;
     if (estimatedTotal > remainingSeconds) {
-      log(`[${tag}] Time budget exceeded: need ~${Math.round(estimatedTotal)}s but only ${Math.round(remainingSeconds)}s remaining. Skipping.`);
+      log(`[${tag}] ↳ Time budget exceeded: need ~${Math.round(estimatedTotal)}s but only ${Math.round(remainingSeconds)}s left`);
       return;
     }
   }
@@ -110,15 +110,15 @@ export async function judgeChallenge(
   // Step 1: Join the challenge
   try {
     const joinResult = await client.joinChallenge(challengeId);
-    log(`[${tag}] Joined, stake: ${joinResult.stake_amount ?? "?"} FOR`);
+    log(`[${tag}] ✓ Joined, stake: ${joinResult.stake_amount ?? "?"} FOR`);
   } catch (err) {
     const msg = String(err).toLowerCase();
     if (msg.includes("maximum") || msg.includes("full") || msg.includes("participants")) {
-      log(`[${tag}] Challenge full, skipping`);
+      log(`[${tag}] ↳ Challenge full, skipping`);
       return;
     }
     if (msg.includes("already")) {
-      log(`[${tag}] Already joined, proceeding`);
+      log(`[${tag}] ↳ Already joined, proceeding`);
     } else {
       throw err;
     }
@@ -134,7 +134,7 @@ export async function judgeChallenge(
   const answers = (answersResp.answers ?? []) as Answer[];
   if (answers.length === 0) throw new Error(`No answers for challenge ${challengeId}`);
 
-  log(`[${tag}] Got ${answers.length} answers, evaluating quality...`);
+  log(`[${tag}] ↳ Got ${answers.length} answers, evaluating quality...`);
   pinTask(challengeId, `Judging ${tag}`);
 
   try {
@@ -153,7 +153,7 @@ export async function judgeChallenge(
         const isGood = await llm.evaluateGoodEnough(problem, content, RANKING_LLM_RETRIES, AbortSignal.timeout(60_000));
         evalDone++;
         const verdict = isGood ? "good" : "bad";
-        log(`[${tag}] Eval ${evalDone}/${evalTotal} → ${verdict}`);
+        log(`[${tag}] ↳ Eval ${evalDone}/${evalTotal} → ${verdict}`);
         return [answer, isGood];
       },
     );
@@ -163,7 +163,7 @@ export async function judgeChallenge(
       else badAnswers.push(answer);
     }
 
-    log(`[${tag}] Quality: ${goodAnswers.length} good, ${badAnswers.length} bad`);
+    log(`[${tag}] ✓ Quality: ${goodAnswers.length} good, ${badAnswers.length} bad`);
 
     let answerRankings: string[];
     let goodAnswerIds: string[];
@@ -179,7 +179,7 @@ export async function judgeChallenge(
       const wins: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
       const pairs = buildPairwisePairs(n);
 
-      log(`[${tag}] Running ${pairs.length} pairwise comparisons...`);
+      log(`[${tag}] ↳ Running ${pairs.length} pairwise comparisons...`);
 
       let cmpDone = 0;
       const cmpTotal = pairs.length;
@@ -196,7 +196,7 @@ export async function judgeChallenge(
           );
           cmpDone++;
           const winner = result === "A" ? `#${aIdx + 1} wins` : result === "B" ? `#${bIdx + 1} wins` : result === "U" ? "tie" : "skip";
-          log(`[${tag}] Compare ${cmpDone}/${cmpTotal} (#${aIdx + 1} vs #${bIdx + 1}) → ${winner}`);
+          log(`[${tag}] ↳ Compare ${cmpDone}/${cmpTotal} (#${aIdx + 1} vs #${bIdx + 1}) → ${winner}`);
           return [aIdx, bIdx, result];
         },
       );
@@ -218,7 +218,7 @@ export async function judgeChallenge(
         .sort((a, b) => b.strength - a.strength);
 
       const ranking = indexed.map((x) => `#${x.idx + 1}:${x.strength.toFixed(2)}`).join(" > ");
-      log(`[${tag}] BT ranking: ${ranking}`);
+      log(`[${tag}] ✓ BT ranking: ${ranking}`);
 
       const rankedGoodIds = indexed.map((x) => goodAnswers[x.idx].id);
       const rankedBadIds = badAnswers.map((a) => a.id);
@@ -227,9 +227,9 @@ export async function judgeChallenge(
     }
 
     // Step 7: Submit vote
-    log(`[${tag}] Submitting vote with ${answerRankings.length} ranked answers...`);
+    log(`[${tag}] ↳ Submitting vote with ${answerRankings.length} ranked answers...`);
     const voteResult = await client.submitVote(challengeId, answerRankings, goodAnswerIds);
-    log(`[${tag}] Vote submitted! vote_id=${voteResult.vote_id ?? "?"}`);
+    log(`[${tag}] ✓ Vote submitted! vote_id=${voteResult.vote_id ?? "?"}`);
   } finally {
     unpinTask(challengeId);
   }

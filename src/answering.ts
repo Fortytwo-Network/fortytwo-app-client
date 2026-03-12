@@ -45,13 +45,13 @@ export async function answerQuery(client: FortyTwoClient, queryId: string): Prom
   const timer = setTimeout(() => ac.abort(), timeoutMs);
 
   try {
-    log(`[${tag}] Answering started`);
+    log(`[${tag}] ↳ Answering started`);
 
     // Step 0: Fetch query detail to check state and precise deadline
     let query = await client.getQuery(queryId);
 
     if (query.has_answered) {
-      log(`[${tag}] Already answered, skipping`);
+      log(`[${tag}] ↳ Already answered, skipping`);
       return;
     }
 
@@ -59,36 +59,36 @@ export async function answerQuery(client: FortyTwoClient, queryId: string): Prom
     const minAnswerTime = cfg.llm_timeout + 30;
 
     if (remaining <= 0) {
-      log(`[${tag}] Skipping: deadline passed or unavailable`);
+      log(`[${tag}] ↳ Skipping: deadline passed`);
       return;
     }
 
     if (remaining > 0 && remaining < minAnswerTime) {
-      log(`[${tag}] Skipping: only ${Math.round(remaining)}s until deadline (need ${minAnswerTime}s)`);
+      log(`[${tag}] ↳ Skipping: only ${Math.round(remaining)}s left (need ${minAnswerTime}s)`);
       return;
     }
 
     const status = (query.status ?? "") as string;
     if (status !== "active" && status !== "answering_grace") {
-      log(`[${tag}] Query status is '${status}', not answerable — skipping`);
+      log(`[${tag}] ↳ Query status '${status}', not answerable — skipping`);
       return;
     }
 
     // Step 1: Join the query
     if (query.has_joined) {
-      log(`[${tag}] Already joined, proceeding to answer`);
+      log(`[${tag}] ↳ Already joined, proceeding`);
     } else {
       try {
         const joinResult = await client.joinQuery(queryId);
-        log(`[${tag}] Joined, stake: ${joinResult.stake_amount ?? "?"} FOR`);
+        log(`[${tag}] ✓ Joined, stake: ${joinResult.stake_amount ?? "?"} FOR`);
       } catch (err) {
         const msg = String(err).toLowerCase();
         if (msg.includes("maximum") || msg.includes("full") || msg.includes("participants")) {
-          log(`[${tag}] Query full, skipping`);
+          log(`[${tag}] ↳ Query full, skipping`);
           return;
         }
         if (msg.includes("already")) {
-          log(`[${tag}] Already joined, proceeding`);
+          log(`[${tag}] ↳ Already joined, proceeding`);
         } else {
           throw err;
         }
@@ -110,20 +110,19 @@ export async function answerQuery(client: FortyTwoClient, queryId: string): Prom
         ANSWERER_LLM_RETRIES,
         ac.signal,
       );
-      log(`[${tag}] Generated answer in ${Date.now() - tGen}ms`);
+      log(`[${tag}] ✓ Generated answer in ${Date.now() - tGen}ms`);
 
       const encryptedContent = Buffer.from(answerText, "utf-8").toString("base64");
 
-      log(`[${tag}] Submitting answer...`);
+      log(`[${tag}] ↳ Submitting answer...`);
       const result = await client.submitAnswer(queryId, encryptedContent);
-      log(`[${tag}] Answer submitted! answer_id=${result.id ?? "?"}`);
+      log(`[${tag}] ✓ Answer submitted! answer_id=${result.id ?? "?"}`);
     } finally {
       unpinTask(queryId);
-      log(`[${tag}] Answering finished`);
     }
   } catch (err) {
     if (ac.signal.aborted) {
-      log(`[${tag}] Answering timed out after ${cfg.llm_timeout}s`);
+      log(`[${tag}] ✕ Answering timed out after ${cfg.llm_timeout}s`);
       return;
     }
     throw err;
