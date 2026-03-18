@@ -9,4 +9,5 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 
+console.clear();
 render(<App />);

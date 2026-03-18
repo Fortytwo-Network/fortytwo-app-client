@@ -45,7 +45,7 @@ const LOGO = [
 
 const MAX_LINES = 200;
 // frame header(1) + empty(1) + logo(7) + empty(1) + frame footer(1) + gap(1) + separator(1) + prompt+footer(1) + gaps
-const CHROME_LINES = 16;
+const CHROME_LINES = 14;
 
 function padRight(str: string, len: number): string {
   return str.length >= len ? str : str + " ".repeat(len - str.length);
@@ -63,8 +63,16 @@ export default function BotScreen() {
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const { stdout } = useStdout();
 
-  const termCols = stdout.columns ?? 80;
-  const termRows = stdout.rows ?? 24;
+  const [termSize, setTermSize] = useState({ cols: stdout.columns ?? 80, rows: stdout.rows ?? 24 });
+
+  useEffect(() => {
+    const onResize = () => setTermSize({ cols: stdout.columns ?? 80, rows: stdout.rows ?? 24 });
+    stdout.on("resize", onResize);
+    return () => { stdout.off("resize", onResize); };
+  }, [stdout]);
+
+  const termCols = termSize.cols;
+  const termRows = termSize.rows;
   const visibleCount = Math.max(termRows - CHROME_LINES, 5);
 
   const pushLine = useCallback((msg: string) => {
@@ -299,7 +307,7 @@ export default function BotScreen() {
           const globalIdx = offset + i;
           const isCurrent = globalIdx === last && line.trim() !== "";
           return (
-            <Text key={globalIdx} color={isCurrent ? COLORS.WHITE : COLORS.GREY_NEUTRAL}>
+            <Text key={globalIdx} color={isCurrent ? COLORS.WHITE : COLORS.GREY_NEUTRAL} wrap="truncate-end">
               {isCurrent ? "▸ " : "  "}{line}
             </Text>
           );
