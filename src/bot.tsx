@@ -109,6 +109,7 @@ export default function BotScreen() {
 
     const results = executeCommand(raw);
     for (const line of results) pushLine(line);
+    pushLine(" ");
   }, [pushLine, client]);
 
 
@@ -200,7 +201,7 @@ export default function BotScreen() {
             if (!cancelled) setBalance(available);
             if (available < cfg.min_balance) {
               throw new InsufficientFundsError(
-                `Balance ${available.toFixed(2)} FOR < minimum ${cfg.min_balance.toFixed(2)} FOR`,
+                `Insufficient FOR balance: ${available.toFixed(2)} available, ${cfg.min_balance.toFixed(2)} required`,
               );
             }
 
@@ -296,7 +297,7 @@ export default function BotScreen() {
       <Box flexDirection="column" height={visibleCount}>
         {visible.map((line, i) => {
           const globalIdx = offset + i;
-          const isCurrent = globalIdx === last;
+          const isCurrent = globalIdx === last && line.trim() !== "";
           return (
             <Text key={globalIdx} color={isCurrent ? COLORS.WHITE : COLORS.GREY_NEUTRAL}>
               {isCurrent ? "▸ " : "  "}{line}

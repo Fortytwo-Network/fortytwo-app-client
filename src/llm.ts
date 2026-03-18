@@ -1,4 +1,13 @@
-import OpenAI, { APIConnectionError, APIConnectionTimeoutError, NotFoundError } from "openai";
+import OpenAI, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+} from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import * as config from "./config.js";
 import { parseLastLetter, verbose } from "./utils.js";
@@ -199,6 +208,46 @@ async function callLlmApi(
         );
       }
     }
+
+    // OpenRouter-specific errors
+    if (!isLocal) {
+      if (err instanceof RateLimitError) {
+        throw new Error(
+          `OpenRouter rate limit exceeded — too many requests. Wait a moment and try again, or reduce llm_concurrency.`,
+        );
+      }
+      if (err instanceof AuthenticationError) {
+        throw new Error(
+          `OpenRouter authentication failed — your API key is invalid or expired. Update it with /config set openrouter_api_key <key>.`,
+        );
+      }
+      if (err instanceof PermissionDeniedError) {
+        throw new Error(
+          `OpenRouter rejected the request — your input was flagged by moderation for model "${cfg.llm_model}".`,
+        );
+      }
+      if (err instanceof BadRequestError) {
+        throw new Error(
+          `OpenRouter bad request — check your model name "${cfg.llm_model}" or request parameters.`,
+        );
+      }
+      if (err instanceof APIError && err.status === 402) {
+        throw new Error(
+          `OpenRouter credits exhausted — add funds at openrouter.ai or switch to a free model.`,
+        );
+      }
+      if (err instanceof APIError && (err.status === 502 || err.status === 503)) {
+        throw new Error(
+          `OpenRouter: model "${cfg.llm_model}" is temporarily unavailable — try again later or switch to another model.`,
+        );
+      }
+      if (err instanceof APIConnectionTimeoutError) {
+        throw new Error(
+          `OpenRouter request timed out — the model may be overloaded. Try again or increase llm_timeout.`,
+        );
+      }
+    }
+
     throw err;
   } finally {
     sem.release();

@@ -211,7 +211,7 @@ export async function main(signal?: AbortSignal): Promise<void> {
         const available = await checkBalance(client);
         if (available < cfg.min_balance) {
           throw new InsufficientFundsError(
-            `Balance ${available.toFixed(2)} FOR is below minimum ${cfg.min_balance.toFixed(2)} FOR`,
+            `Insufficient FOR balance: ${available.toFixed(2)} available, ${cfg.min_balance.toFixed(2)} required`,
           );
         }
 
