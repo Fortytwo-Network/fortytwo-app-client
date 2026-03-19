@@ -155,7 +155,7 @@ describe("setup-logic", () => {
         llm_model: "missing",
       });
       expect(result.ok).toBe(false);
-      expect(result.error).toContain("+1 more");
+      expect(result.error).toContain("Model \"missing\" not found. Choose correct one and restart the client.");
     });
   });
 
