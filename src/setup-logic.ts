@@ -47,6 +47,23 @@ export async function fetchModels(baseUrl: string, apiKey: string): Promise<Fetc
   }
 }
 
+export function validateConfig(values: Record<string, string>): ValidateResult {
+  const inferenceType = values.inference_type;
+  if (inferenceType !== "openrouter" && inferenceType !== "local") {
+    return { ok: false, error: `inference_type is invalid: "${inferenceType}". Options: "openrouter" | "local"` };
+  }
+  if (inferenceType === "openrouter" && !values.openrouter_api_key) {
+    return { ok: false, error: `openrouter_api_key is not set. Use /config set openrouter_api_key <key>` };
+  }
+  if (inferenceType === "local" && !values.llm_api_base) {
+    return { ok: false, error: `llm_api_base is not set for local inference. Use /config set llm_api_base <url>` };
+  }
+  if (!values.llm_model) {
+    return { ok: false, error: `llm_model is not set. Use /config set llm_model <model>` };
+  }
+  return { ok: true };
+}
+
 export async function validateModel(values: Record<string, string>): Promise<ValidateResult> {
   const isLocal = values.inference_type === "local";
   const baseUrl = isLocal
@@ -86,7 +103,7 @@ export async function validateModel(values: Record<string, string>): Promise<Val
     }
 
     if (!models.includes(model)) {
-      return { ok: false, error: `Model "${model}" not found. Available: ${models.slice(0, 5).join(", ")}${models.length > 5 ? ` (+${models.length - 5} more)` : ""}` };
+      return { ok: false, error: `Model "${model}" not found. Choose correct one and restart the client.` };
     }
   } catch {
     return { ok: true };

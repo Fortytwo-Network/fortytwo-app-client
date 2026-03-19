@@ -2,6 +2,7 @@ import { get as getConfig, saveConfig, reloadConfig, type UserConfig } from "./c
 import { loadIdentity } from "./identity.js";
 import { setVerbose } from "./utils.js";
 import { resetLlmClient } from "./llm.js";
+import { validateConfig } from "./setup-logic.js";
 
 const LLM_RESET_KEYS = new Set([
   "llm_model", "openrouter_api_key", "inference_type",
@@ -114,7 +115,14 @@ export function executeCommand(input: string): string[] {
 
       if (LLM_RESET_KEYS.has(key)) resetLlmClient();
 
-      return [`${key} = ${mask(key, String(value))}`];
+      const result: string[] = [`${key} = ${mask(key, String(value))}`];
+
+      const check = validateConfig(updated as unknown as Record<string, string>);
+      if (!check.ok) {
+        result.push(`⚠ ${check.error}`);
+      }
+
+      return result;
     }
 
     return [`Usage: /config show | /config set <key> <value>`];

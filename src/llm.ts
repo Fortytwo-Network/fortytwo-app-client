@@ -292,7 +292,8 @@ export async function compareForRegistration(
         return 0;
       }
     }
-  } catch {
+  } catch (err) {
+    verbose(`✗ Registration comparison failed: ${err}`);
     return 0;
   }
 

@@ -9,7 +9,7 @@ import {
 } from "./config.js";
 import { FortyTwoClient } from "./api-client.js";
 import { registerAgent, saveIdentity } from "./identity.js";
-import { validateModel, fetchModels, buildConfig } from "./setup-logic.js";
+import { validateConfig, validateModel, fetchModels, buildConfig } from "./setup-logic.js";
 import { useLoader } from "./loader.js";
 import { COLORS, ROLE_OPTIONS } from "./constants.js";
 import { getRoleLabel } from "./utils.js";
@@ -233,6 +233,32 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         }
 
         const cfg = getConfig();
+
+        // Show inference info
+        const isLocal = cfg.inference_type === "local";
+        setRegLog((prev) => [
+          ...prev,
+          `Inference: ${isLocal ? "self-hosted" : "openrouter"}`,
+          ...(isLocal ? [`Host: ${cfg.llm_api_base}`] : []),
+          `Model: ${cfg.llm_model}`,
+          "",
+        ]);
+
+        // Validate config fields
+        const cfgCheck = validateConfig(cfg as unknown as Record<string, string>);
+        if (cfgCheck.ok) {
+          setRegLog((prev) => [...prev, "Validating model..."]);
+          const modelCheck = await validateModel(cfg as unknown as Record<string, string>);
+          if (!modelCheck.ok) {
+            setRegError(`Config error: ${modelCheck.error}`);
+            return;
+          }
+          setRegLog((prev) => [...prev, "✓ Model validated"]);
+        } else {
+          setRegError(`Config error: ${cfgCheck.error}`);
+          return;
+        }
+
         const client = new FortyTwoClient();
         const displayName = cfg.display_name || values.agent_name || "JudgeBot";
         await registerAgent(client, displayName, (msg) => {

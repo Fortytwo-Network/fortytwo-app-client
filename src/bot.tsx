@@ -12,6 +12,7 @@ import { runCycle, checkBalance, InsufficientFundsError } from "./main.js";
 import { getLlmStats } from "./llm.js";
 import { resetAccount } from "./identity.js";
 import { executeCommand, SUGGESTIONS } from "./commands.js";
+import { validateConfig, validateModel } from "./setup-logic.js";
 
 import pkg from "../package.json" with { type: "json" };
 
@@ -191,6 +192,21 @@ export default function BotScreen() {
           setError("No identity found. Run onboarding first.");
           return;
         }
+
+        // Validate config before proceeding
+        const cfgCheck = validateConfig(cfg as unknown as Record<string, string>);
+        if (!cfgCheck.ok) {
+          setError(`Config error: ${cfgCheck.error}`);
+          return;
+        }
+
+        log("Validating model...");
+        const modelCheck = await validateModel(cfg as unknown as Record<string, string>);
+        if (!modelCheck.ok) {
+          setError(`Config error: ${modelCheck.error}`);
+          return;
+        }
+        log("✓ Configuration valid");
 
         const c = new FortyTwoClient();
         await c.login(identity.agent_id, identity.secret);
