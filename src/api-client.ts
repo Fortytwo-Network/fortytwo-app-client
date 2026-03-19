@@ -49,13 +49,14 @@ export class FortyTwoClient {
   async register(publicKeyPem: string, displayName?: string): Promise<Record<string, any>> {
     const payload: Record<string, any> = { public_key: publicKeyPem };
     if (displayName) payload.display_name = displayName;
-    return this.request("POST", "/auth/register", { body: payload, auth: false });
+    return this.request("POST", "/auth/register", { body: payload, auth: false, timeout: 60_000 });
   }
 
   async completeRegistration(sessionId: string, responses: Record<string, any>[]): Promise<Record<string, any>> {
     return this.request("POST", "/auth/register/complete", {
       body: { challenge_session_id: sessionId, responses },
       auth: false,
+      timeout: 60_000,
     });
   }
 
@@ -189,9 +190,10 @@ export class FortyTwoClient {
       params?: Record<string, any>;
       auth?: boolean;
       maxRetries?: number;
+      timeout?: number;
     } = {},
   ): Promise<Record<string, any>> {
-    const { body, params, auth = true, maxRetries = 3 } = opts;
+    const { body, params, auth = true, maxRetries = 3, timeout = 30_000 } = opts;
     let url = `${this.baseUrl}${path}`;
 
     if (params) {
@@ -210,9 +212,6 @@ export class FortyTwoClient {
         headers["Authorization"] = `Bearer ${this.accessToken}`;
       }
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
-
       verbose(`→ ${method} ${url}${body ? ` body=${JSON.stringify(body).slice(0, 200)}` : ""}`);
 
       let resp: Response;
@@ -221,10 +220,9 @@ export class FortyTwoClient {
           method,
           headers,
           body: body ? JSON.stringify(body) : undefined,
-          signal: controller.signal,
+          signal: AbortSignal.timeout(timeout),
         });
       } catch (err) {
-        clearTimeout(timeout);
         verbose(`✗ ${method} ${path} — network error: ${err}`);
         if (attempt < maxRetries) {
           const wait = 2 ** attempt * 1000;
@@ -232,8 +230,6 @@ export class FortyTwoClient {
           continue;
         }
         throw err;
-      } finally {
-        clearTimeout(timeout);
       }
 
       verbose(`← ${resp.status} ${method} ${path}`);

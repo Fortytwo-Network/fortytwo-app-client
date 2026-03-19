@@ -405,7 +405,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
             const text = displayLine(line);
             return (
               <Text key={i} color={isCurrent ? undefined : COLORS.GREY_NEUTRAL}>
-                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "  "}{text}
+                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "   "}{text}
               </Text>
             );
           })}

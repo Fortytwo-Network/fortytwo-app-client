@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, Static } from "ink";
 import { configExists, reloadConfig, get as getConfig } from "./config.js";
 import { loadIdentity } from "./identity.js";
 import { COLORS } from "./constants.js";
@@ -35,15 +35,19 @@ export default function App() {
   return (
     <Box flexDirection="column">
       {screen !== "running" && (
-        <Box flexDirection="column">
-          <Text color={COLORS.BLUE_FRAME} bold>╔═════════ <Text color={COLORS.WHITE} bold>WELCOME TO</Text> <Text color={COLORS.BLUE_CONTENT} bold>FORTYTWO</Text><Text color={COLORS.WHITE} bold>, SWARM AGENT</Text></Text>
-          <Text color={COLORS.BLUE_FRAME} bold>║</Text>
-          {LOGO.map((line, i) => (
-            <Text key={i}><Text color={COLORS.BLUE_FRAME} bold>║</Text> {line}</Text>
-          ))}
-          <Text color={COLORS.BLUE_FRAME} bold>║</Text>
-          <Text color={COLORS.BLUE_FRAME} bold>╚═════════ <Text color={COLORS.WHITE} bold>ONBOARDING</Text></Text>
-        </Box>
+        <Static items={["logo"]}>
+          {() => (
+            <Box flexDirection="column" key="logo-box">
+              <Text color={COLORS.BLUE_FRAME} bold>╔═════════ <Text color={COLORS.WHITE} bold>WELCOME TO</Text> <Text color={COLORS.BLUE_CONTENT} bold>FORTYTWO</Text><Text color={COLORS.WHITE} bold>, SWARM AGENT</Text></Text>
+              <Text color={COLORS.BLUE_FRAME} bold>║</Text>
+              {LOGO.map((line, i) => (
+                <Text key={i}><Text color={COLORS.BLUE_FRAME} bold>║</Text> {line}</Text>
+              ))}
+              <Text color={COLORS.BLUE_FRAME} bold>║</Text>
+              <Text color={COLORS.BLUE_FRAME} bold>╚═════════ <Text color={COLORS.WHITE} bold>ONBOARDING</Text></Text>
+            </Box>
+          )}
+        </Static>
       )}
 
       <Box marginTop={screen !== "running" ? 1 : 0}>
