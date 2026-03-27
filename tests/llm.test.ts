@@ -68,6 +68,17 @@ describe("llm", () => {
     });
   }
 
+  function mockStreamResponse(content: string) {
+    const chunks = content.split("").map((ch) => ({
+      choices: [{ delta: { content: ch } }],
+    }));
+    mockCreate.mockResolvedValue({
+      [Symbol.asyncIterator]: async function* () {
+        for (const chunk of chunks) yield chunk;
+      },
+    });
+  }
+
   describe("callLlm", () => {
     it("sends prompt and returns response content", async () => {
       mockResponse("Hello World");
@@ -154,7 +165,7 @@ describe("llm", () => {
 
   describe("generateAnswer", () => {
     it("sends system + user messages", async () => {
-      mockResponse("The answer is 42");
+      mockStreamResponse("The answer is 42");
       const result = await generateAnswer("Be helpful", "What is 6*7?");
       expect(result).toBe("The answer is 42");
       const call = mockCreate.mock.calls[0];

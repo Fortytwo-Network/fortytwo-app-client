@@ -5,14 +5,13 @@ import { CommandInput } from "./command-input.js";
 import { get as getConfig } from "./config.js";
 import { COLORS } from "./constants.js";
 import { setLogFn, setVerbose, log, sleep, getPinnedTasks, formatNumber, truncateName, getRoleLabel } from "./utils.js";
-import type { PinnedTask } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
-import { loadIdentity } from "./identity.js";
-import { runCycle, checkBalance, InsufficientFundsError } from "./main.js";
+import { loadIdentity, resetAccount, reactivateAccount } from "./identity.js";
+import { runCycle, checkBalance, InsufficientFundsError, initViewerBus } from "./main.js";
 import { getLlmStats } from "./llm.js";
-import { resetAccount } from "./identity.js";
 import { executeCommand, SUGGESTIONS } from "./commands.js";
 import { validateConfig, validateModel } from "./setup-logic.js";
+import { viewerBus } from "./event-bus.js";
 
 import pkg from "../package.json" with { type: "json" };
 
@@ -208,6 +207,7 @@ export default function BotScreen() {
         }
         log("✓ Configuration valid");
 
+        viewerBus.setState("AUTHENTICATING");
         const c = new FortyTwoClient();
         await c.login(identity.agent_id, identity.secret);
         setClient(c);
@@ -218,6 +218,9 @@ export default function BotScreen() {
         log(`Logged in as ${name} — ${identity.agent_id}`);
         log(`Role: ${getRoleLabel(cfg.bot_role)} | Poll: ${cfg.poll_interval}s | Model: ${cfg.llm_model}`);
 
+        await initViewerBus(c, cfg, identity.agent_id);
+
+        let cycles = 0;
         while (!cancelled) {
           const cycleStart = Date.now();
           try {
@@ -230,29 +233,56 @@ export default function BotScreen() {
             }
 
             const count = await runCycle(c);
+            cycles++;
+            viewerBus.updateStats({ cycles });
             if (count > 0) log(`✓ Processed ${count} items this cycle`);
           } catch (err) {
             if (cancelled) return;
             if (err instanceof InsufficientFundsError) {
               log(`✕ ${err.message} — resetting account...`);
+              viewerBus.pushError(err.message);
               await resetAccount(c, pushLine);
               log("✓ Account reset complete!");
               continue;
             }
+            const errMsg = (err as Error).message ?? String(err);
+            if (errMsg.toLowerCase().includes("inactive") || errMsg.toLowerCase().includes("deactivated")) {
+              log(`Account deactivated — reactivating...`);
+              viewerBus.updateStats({ accountInactive: true });
+              await reactivateAccount(c, identity.agent_id, identity.secret);
+              await c.login(identity.agent_id, identity.secret);
+              viewerBus.updateStats({ accountInactive: false });
+              log("✓ Reactivation complete!");
+              continue;
+            }
             log(`✕ Error in cycle: ${err}`);
+            viewerBus.pushError(errMsg);
           }
 
           if (cancelled) return;
+          viewerBus.setState("COOLDOWN");
           const elapsed = Date.now() - cycleStart;
           const delay = cfg.poll_interval * 1000 - elapsed;
           if (delay > 0) {
-            await sleep(delay);
+            const totalSec = Math.round(delay / 1000);
+            for (let rem = totalSec; rem > 0; rem--) {
+              if (cancelled) return;
+              viewerBus.updateStats({ cooldownRemaining: rem });
+              await sleep(1000);
+            }
+            viewerBus.updateStats({ cooldownRemaining: 0 });
           } else {
             log(`Cycle took ${Math.round(elapsed / 1000)}s (> ${cfg.poll_interval}s), starting next immediately`);
           }
         }
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        if (!cancelled) {
+          setError(String(err));
+          viewerBus.setState("ERROR");
+          viewerBus.pushError(String(err));
+        }
+      } finally {
+        viewerBus.setRunning(false);
       }
     })();
 
@@ -317,7 +347,7 @@ export default function BotScreen() {
       </Box>
 
       <Text color={COLORS.BLUE_FRAME} bold>║</Text>
-      <Text color={COLORS.BLUE_FRAME} bold>╚═════════ <Text color={COLORS.GREY_LIGHT}>{roleDisplay}</Text></Text>
+      <Text color={COLORS.BLUE_FRAME}>╚═════════ <Text color={COLORS.WHITE}>{roleDisplay} <Text color={COLORS.BLUE_CONTENT}>| WATCH YOUR AGENT:</Text> <Text color={COLORS.WHITE}>http://127.0.0.1:4242</Text></Text></Text>
       <Box flexDirection="column" height={visibleCount}>
         {visible.map((line, i) => {
           const globalIdx = offset + i;

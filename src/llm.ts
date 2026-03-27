@@ -11,6 +11,7 @@ import OpenAI, {
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import * as config from "./config.js";
 import { parseLastLetter, verbose } from "./utils.js";
+import { viewerBus } from "./event-bus.js";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
@@ -146,6 +147,50 @@ function getClient(): OpenAI {
   return openaiClient;
 }
 
+function mapLlmError(err: unknown): Error {
+  const cfg = config.get();
+  const isLocal = cfg.inference_type === "local";
+
+  if (isLocal && cfg.llm_api_base) {
+    const base = cfg.llm_api_base;
+    if (err instanceof APIConnectionTimeoutError) {
+      return new Error(`Local LLM at ${base} timed out — is the model loaded? Check your inference server.`);
+    }
+    if (err instanceof APIConnectionError) {
+      return new Error(`Cannot connect to local LLM at ${base} — is the server running? Start LM Studio / Ollama / vLLM and try again.`);
+    }
+    if (err instanceof NotFoundError) {
+      return new Error(`Model "${cfg.llm_model}" not found at ${base} — load the model in your inference server first.`);
+    }
+  }
+
+  if (!isLocal) {
+    if (err instanceof RateLimitError) {
+      return new Error(`OpenRouter rate limit exceeded — too many requests. Wait a moment and try again, or reduce llm_concurrency.`);
+    }
+    if (err instanceof AuthenticationError) {
+      return new Error(`OpenRouter authentication failed — your API key is invalid or expired. Update it with /config set openrouter_api_key <key>.`);
+    }
+    if (err instanceof PermissionDeniedError) {
+      return new Error(`OpenRouter rejected the request — your input was flagged by moderation for model "${cfg.llm_model}".`);
+    }
+    if (err instanceof BadRequestError) {
+      return new Error(`OpenRouter bad request — check your model name "${cfg.llm_model}" or request parameters.`);
+    }
+    if (err instanceof APIError && err.status === 402) {
+      return new Error(`OpenRouter credits exhausted — add funds at openrouter.ai or switch to a free model.`);
+    }
+    if (err instanceof APIError && (err.status === 502 || err.status === 503)) {
+      return new Error(`OpenRouter: model "${cfg.llm_model}" is temporarily unavailable — try again later or switch to another model.`);
+    }
+    if (err instanceof APIConnectionTimeoutError) {
+      return new Error(`OpenRouter request timed out — the model may be overloaded. Try again or increase llm_timeout.`);
+    }
+  }
+
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 async function callLlmApi(
   messages: ChatCompletionMessageParam[],
   retries = 2,
@@ -190,65 +235,7 @@ async function callLlmApi(
     verbose(`✗ failed after ${Date.now() - start}ms: ${err}`);
     recordError(purpose);
     if (signal?.aborted) throw new Error("LLM call aborted");
-    if (isLocal && cfg.llm_api_base) {
-      const base = cfg.llm_api_base;
-      if (err instanceof APIConnectionTimeoutError) {
-        throw new Error(
-          `Local LLM at ${base} timed out — is the model loaded? Check your inference server.`,
-        );
-      }
-      if (err instanceof APIConnectionError) {
-        throw new Error(
-          `Cannot connect to local LLM at ${base} — is the server running? Start LM Studio / Ollama / vLLM and try again.`,
-        );
-      }
-      if (err instanceof NotFoundError) {
-        throw new Error(
-          `Model "${cfg.llm_model}" not found at ${base} — load the model in your inference server first.`,
-        );
-      }
-    }
-
-    // OpenRouter-specific errors
-    if (!isLocal) {
-      if (err instanceof RateLimitError) {
-        throw new Error(
-          `OpenRouter rate limit exceeded — too many requests. Wait a moment and try again, or reduce llm_concurrency.`,
-        );
-      }
-      if (err instanceof AuthenticationError) {
-        throw new Error(
-          `OpenRouter authentication failed — your API key is invalid or expired. Update it with /config set openrouter_api_key <key>.`,
-        );
-      }
-      if (err instanceof PermissionDeniedError) {
-        throw new Error(
-          `OpenRouter rejected the request — your input was flagged by moderation for model "${cfg.llm_model}".`,
-        );
-      }
-      if (err instanceof BadRequestError) {
-        throw new Error(
-          `OpenRouter bad request — check your model name "${cfg.llm_model}" or request parameters.`,
-        );
-      }
-      if (err instanceof APIError && err.status === 402) {
-        throw new Error(
-          `OpenRouter credits exhausted — add funds at openrouter.ai or switch to a free model.`,
-        );
-      }
-      if (err instanceof APIError && (err.status === 502 || err.status === 503)) {
-        throw new Error(
-          `OpenRouter: model "${cfg.llm_model}" is temporarily unavailable — try again later or switch to another model.`,
-        );
-      }
-      if (err instanceof APIConnectionTimeoutError) {
-        throw new Error(
-          `OpenRouter request timed out — the model may be overloaded. Try again or increase llm_timeout.`,
-        );
-      }
-    }
-
-    throw err;
+    throw mapLlmError(err);
   } finally {
     sem.release();
   }
@@ -368,14 +355,72 @@ export async function generateAnswer(
   retries = 2,
   signal?: AbortSignal,
 ): Promise<string> {
-  return callLlmApi(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: problem },
-    ],
-    retries,
-    0.7,
-    signal,
-    "generation",
-  );
+  const cfg = config.get();
+  const client = getClient();
+  const sem = getSemaphore();
+
+  await sem.acquire();
+  const start = Date.now();
+  viewerBus.streamStart();
+
+  try {
+    if (signal?.aborted) throw new Error("LLM call aborted");
+
+    verbose(`→ [stream] model=${cfg.llm_model} temp=0.7`);
+
+    const stream = await client.chat.completions.create(
+      {
+        model: cfg.llm_model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: problem },
+        ],
+        temperature: 0.7,
+        stream: true,
+      },
+      {
+        signal: signal ?? undefined,
+        maxRetries: retries,
+      },
+    );
+
+    let fullText = "";
+    let tokenCount = 0;
+
+    for await (const chunk of stream) {
+      if (signal?.aborted) break;
+      const delta = chunk.choices[0]?.delta?.content ?? "";
+      if (delta) {
+        fullText += delta;
+        tokenCount++;
+        const elapsed = (Date.now() - start) / 1000;
+        const tps = elapsed > 0 ? tokenCount / elapsed : 0;
+        viewerBus.streamChunk(fullText, Math.round(tps * 10) / 10);
+      }
+    }
+
+    const content = fullText.trim();
+    const elapsed = (Date.now() - start) / 1000;
+    const finalTps = elapsed > 0 ? tokenCount / elapsed : 0;
+    const roundedTps = Math.round(finalTps * 10) / 10;
+
+    verbose(`← [stream] ${cfg.llm_model} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
+    recordSuccess("generation", Date.now() - start);
+
+    const thinkMatch = content.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
+    const thinkingText = thinkMatch ? thinkMatch[1].trim() : content;
+    const answerText = thinkMatch ? thinkMatch[2].trim() : content;
+
+    viewerBus.streamEnd(thinkingText, answerText, roundedTps);
+
+    return answerText || content;
+  } catch (err) {
+    verbose(`✗ [stream] failed after ${Date.now() - start}ms: ${err}`);
+    recordError("generation");
+    viewerBus.streamEnd("", "", 0);
+    if (signal?.aborted) throw new Error("LLM call aborted");
+    throw mapLlmError(err);
+  } finally {
+    sem.release();
+  }
 }

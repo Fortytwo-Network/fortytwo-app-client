@@ -2,6 +2,7 @@ import * as config from "./config.js";
 import { log, pinTask, unpinTask } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import * as llm from "./llm.js";
+import { viewerBus } from "./event-bus.js";
 
 const ANSWERER_LLM_RETRIES = 1;
 
@@ -46,6 +47,7 @@ export async function answerQuery(client: FortyTwoClient, queryId: string): Prom
 
   try {
     log(`[${tag}] ↳ Answering started`);
+    viewerBus.setState("JOINING");
 
     // Step 0: Fetch query detail to check state and precise deadline
     let query = await client.getQuery(queryId);
@@ -101,6 +103,12 @@ export async function answerQuery(client: FortyTwoClient, queryId: string): Prom
     if (!problem) throw new Error(`No decrypted content for query ${queryId}`);
 
     // Step 3: Generate answer via LLM
+    viewerBus.setState("THINKING");
+    viewerBus.updateStats({
+      activeQueryId: queryId,
+      activeQuestionText: problem,
+      activeQuestionCat: String(query.specialization ?? "general"),
+    });
     pinTask(queryId, `Answering ${tag}`);
     try {
       const tGen = Date.now();
@@ -112,13 +120,20 @@ export async function answerQuery(client: FortyTwoClient, queryId: string): Prom
       );
       log(`[${tag}] ✓ Generated answer in ${Date.now() - tGen}ms`);
 
+      viewerBus.setState("SUBMITTING");
       const encryptedContent = Buffer.from(answerText, "utf-8").toString("base64");
 
       log(`[${tag}] ↳ Submitting answer...`);
       const result = await client.submitAnswer(queryId, encryptedContent);
       log(`[${tag}] ✓ Answer submitted! answer_id=${result.id ?? "?"}`);
+      viewerBus.updateStats({ answers: (viewerBus.stats.answers || 0) + 1 });
     } finally {
       unpinTask(queryId);
+      viewerBus.updateStats({
+        activeQueryId: null,
+        activeQuestionText: null,
+        activeQuestionCat: null,
+      });
     }
   } catch (err) {
     if (ac.signal.aborted) {

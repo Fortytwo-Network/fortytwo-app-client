@@ -1,4 +1,5 @@
 import { COLORS, ROLE_OPTIONS } from "./constants.js";
+import { viewerBus } from "./event-bus.js";
 
 export { COLORS, ROLE_OPTIONS };
 
@@ -72,6 +73,7 @@ export function setLogFn(fn: (msg: string) => void): void {
 
 export function log(msg: string): void {
   _logFn(msg);
+  viewerBus.pushLog("info", msg);
 }
 
 // ── Verbose logging ───────────────────────────────────────────
@@ -82,7 +84,10 @@ export function setVerbose(on: boolean): void {
 }
 
 export function verbose(msg: string): void {
-  if (_verbose) _logFn(`[verbose] ${msg}`);
+  if (_verbose) {
+    _logFn(`[verbose] ${msg}`);
+    viewerBus.pushLog("dim", msg);
+  }
 }
 
 // ── Pinned tasks (shown as active tasks section) ─────────────

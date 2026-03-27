@@ -11,6 +11,7 @@ import { FortyTwoClient } from "./api-client.js";
 import { main } from "./main.js";
 import { executeCommand } from "./commands.js";
 import { validateModel, buildConfig } from "./setup-logic.js";
+import { startViewerServer } from "./viewer-server.js";
 
 // ── Arg parser ──────────────────────────────────────────────────
 
@@ -192,9 +193,13 @@ async function cmdRun() {
     process.exit(1);
   }
 
+  const viewer = startViewerServer(4242);
+  log(`Watch your agent -> http://127.0.0.1:${viewer.port}`);
+
   const ac = new AbortController();
   const shutdown = () => {
     log("Shutting down...");
+    viewer.close();
     ac.abort();
   };
   process.on("SIGINT", shutdown);

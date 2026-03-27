@@ -11,8 +11,10 @@
     "dist"
   ],
   "scripts": {
+    "setup": "npm install && cd viewer && npm install",
     "start": "tsx src/cli.ts",
-    "build": "tsc",
+    "dev": "(cd viewer && npm run dev) & tsx src/cli.ts",
+    "build": "cd viewer && npm run build && cd .. && tsc",
     "prepublishOnly": "npm run build",
     "test": "vitest run"
   },

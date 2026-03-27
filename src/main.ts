@@ -7,6 +7,53 @@ import { judgeChallenge } from "./judging.js";
 import { answerQuery } from "./answering.js";
 import { isLlmBusy } from "./llm.js";
 import { validateModel } from "./setup-logic.js";
+import { viewerBus, type VisibleQuery } from "./event-bus.js";
+
+/** Initialize viewer dashboard config and load initial stats from API. */
+export async function initViewerBus(
+  client: FortyTwoClient,
+  cfg: ReturnType<typeof config.get>,
+  agentId: string,
+): Promise<void> {
+  viewerBus.setConfig({
+    agentId,
+    llmModel: cfg.llm_model,
+    inferenceType: cfg.inference_type,
+    provider: cfg.inference_type === "local"
+      ? cfg.llm_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+      : "OpenRouter",
+    cycleIntervalMs: cfg.poll_interval * 1000,
+    autoRestart: true,
+  });
+  viewerBus.setRunning(true);
+
+  try {
+    const [rawStats, agentData] = await Promise.all([
+      client.getAgentStats().catch(() => null),
+      client.getAgent().catch(() => null),
+    ]);
+    if (rawStats) {
+      viewerBus.updateStats({
+        answersSubmitted: rawStats.answers_submitted ?? 0,
+        answersWon: rawStats.answers_won ?? 0,
+        answerWinRate: String(rawStats.answer_win_rate ?? "0"),
+        judgmentsMade: rawStats.judgments_made ?? 0,
+        judgmentAccuracy: String(rawStats.judgment_accuracy ?? "0"),
+        queriesSubmitted: rawStats.queries_submitted ?? 0,
+        queriesCompleted: rawStats.queries_completed ?? 0,
+      });
+    }
+    if (agentData) {
+      const p = agentData.profile ?? agentData;
+      viewerBus.updateStats({
+        rank: String(p.intelligence_score ?? p.intellect_score ?? "—"),
+        judgeElo: String(p.judging_score ?? p.judge_score ?? "—"),
+        intelligenceNormalized: String(p.intelligence_normalized ?? "0"),
+        judgingNormalized: String(p.judging_normalized ?? "0"),
+      });
+    }
+  } catch { /* stats are optional — don't block startup */ }
+}
 
 export class InsufficientFundsError extends Error {
   constructor(message: string) {
@@ -37,6 +84,20 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
   try {
     const balanceData = await client.getBalance();
     const available = parseFloat(balanceData.available ?? "0");
+    const staked = parseFloat(balanceData.staked ?? "0");
+    const total = parseFloat(balanceData.total ?? "0");
+    const weekEarned = parseFloat(balanceData.current_week_earned ?? "0");
+    const lifetimeEarned = parseFloat(balanceData.lifetime_earned ?? "0");
+    const lifetimeSpent = parseFloat(balanceData.lifetime_spent ?? "0");
+    viewerBus.updateStats({
+      energy: available,
+      staked,
+      total,
+      weekEarned,
+      lifetimeEarned,
+      lifetimeSpent,
+      forBalance: available.toFixed(2),
+    });
     return available;
   } catch (err) {
     log(`Failed to check balance: ${err}`);
@@ -66,6 +127,7 @@ function launchTask(id: string, label: string, fn: () => Promise<void>): void {
 }
 
 export async function processChallenges(client: FortyTwoClient, dualMode = false): Promise<number> {
+  viewerBus.setState("JUDGING");
   if (isLlmBusy()) {
     log(`LLM queue busy, skipping challenge pickup`);
     return 0;
@@ -109,8 +171,28 @@ export async function processChallenges(client: FortyTwoClient, dualMode = false
 }
 
 export async function processQueries(client: FortyTwoClient, dualMode = false): Promise<number> {
+  viewerBus.setState("SCANNING");
   const resp = await client.getActiveQueries(1, 50);
   const queries = (resp.queries ?? []) as Record<string, any>[];
+
+  const visibleQueries: VisibleQuery[] = queries.map((q) => {
+    const queryId = String(q.id);
+    const isInFlight = inFlight.has(queryId);
+    let status = "available";
+    if (isInFlight) status = "active";
+    else if (q.has_answered) status = "answered";
+    return {
+      id: queryId,
+      specialization: String(q.specialization ?? "general"),
+      stake: parseFloat(q.stake_amount ?? "0"),
+      minRank: parseFloat(q.min_intelligence_rank ?? "0"),
+      answerCount: (q.answer_count ?? 0) as number,
+      status,
+      questionText: q.decrypted_content as string | undefined,
+    };
+  });
+  viewerBus.setQueries(visibleQueries);
+  viewerBus.updateStats({ questionsAvailable: queries.length });
 
   if (queries.length === 0) {
     log("No active queries available");
@@ -202,9 +284,12 @@ export async function main(signal?: AbortSignal): Promise<void> {
       process.exit(1);
     }
 
+    viewerBus.setState("AUTHENTICATING");
     await client.login(identity.agent_id, identity.secret);
+    await initViewerBus(client, cfg, identity.agent_id);
 
     log(`✓ Starting polling loop (interval: ${cfg.poll_interval}s)`);
+    let cycles = 0;
     while (!signal?.aborted) {
       const cycleStart = Date.now();
       try {
@@ -216,11 +301,14 @@ export async function main(signal?: AbortSignal): Promise<void> {
         }
 
         const count = await runCycle(client);
+        cycles++;
+        viewerBus.updateStats({ cycles });
         if (count > 0) log(`Processed ${count} items this cycle`);
       } catch (err) {
         if (signal?.aborted) return;
         if (err instanceof InsufficientFundsError) {
           log(`${err.message} — resetting account...`);
+          viewerBus.pushError(err.message);
           await resetAccount(client);
           log("Account reset complete!");
           continue;
@@ -228,19 +316,29 @@ export async function main(signal?: AbortSignal): Promise<void> {
         const errMsg = (err as Error).message ?? String(err);
         if (errMsg.toLowerCase().includes("inactive") || errMsg.toLowerCase().includes("deactivated")) {
           log(`Account deactivated — reactivating...`);
+          viewerBus.updateStats({ accountInactive: true });
           await reactivateAccount(client, identity.agent_id, identity.secret);
           await client.login(identity.agent_id, identity.secret);
+          viewerBus.updateStats({ accountInactive: false });
           log("Reactivation complete!");
           continue;
         }
         log(`Error in polling cycle: ${errMsg}`);
+        viewerBus.pushError(errMsg);
       }
 
       if (signal?.aborted) return;
+      viewerBus.setState("COOLDOWN");
       const elapsed = Date.now() - cycleStart;
       const delay = cfg.poll_interval * 1000 - elapsed;
       if (delay > 0) {
-        await sleep(delay, signal);
+        const totalSec = Math.round(delay / 1000);
+        for (let rem = totalSec; rem > 0; rem--) {
+          viewerBus.updateStats({ cooldownRemaining: rem });
+          await sleep(1000, signal);
+          if (signal?.aborted) return;
+        }
+        viewerBus.updateStats({ cooldownRemaining: 0 });
       } else {
         log(`Cycle took ${Math.round(elapsed / 1000)}s (> ${cfg.poll_interval}s), starting next immediately`);
       }
@@ -248,6 +346,10 @@ export async function main(signal?: AbortSignal): Promise<void> {
   } catch (err) {
     if ((err as Error).name !== "AbortError") {
       log(`Fatal error: ${err}`);
+      viewerBus.setState("ERROR");
+      viewerBus.pushError(String(err));
     }
+  } finally {
+    viewerBus.setRunning(false);
   }
 }
