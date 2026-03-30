@@ -262,7 +262,14 @@ export class FortyTwoClient {
       if (resp.status >= 400) {
         const text = await resp.text();
         let detail: string | undefined;
-        try { detail = JSON.parse(text).detail; } catch {}
+        try {
+          const parsed = JSON.parse(text).detail;
+          if (typeof parsed === "string") {
+            detail = parsed;
+          } else if (Array.isArray(parsed)) {
+            detail = parsed.map((e: any) => e.msg ?? String(e)).join("; ");
+          }
+        } catch {}
         throw new Error(detail || `API error ${resp.status} on ${method} ${path}: ${text.slice(0, 500)}`);
       }
 

@@ -42,6 +42,7 @@ const selectTheme = extendTheme(defaultTheme, {
         label: ({ isFocused }: { isFocused: boolean }) => ({
           color: isFocused ? COLORS.BLUE_CONTENT : undefined,
         }),
+        selectedIndicator: () => ({ display: "none" as const }),
       },
     },
   },
@@ -116,14 +117,41 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   const [regError, setRegError] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState("");
+  const [backFocused, setBackFocused] = useState(false);
 
   const isLoading = phase !== "input";
   const loader = useLoader(isLoading);
 
-  useInput(() => {}, { isActive: true });
-
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
+  const canGoBack = stepIdx > 0;
+
+  function goBack() {
+    if (!canGoBack) return;
+    const prevStep = steps[stepIdx - 1];
+    setValidationError(null);
+    setModelFilter(prevStep.id === "llm_model" ? (values["llm_model"] ?? "") : "");
+    setBackFocused(false);
+    setStepIdx(stepIdx - 1);
+  }
+
+  useInput((_input, key) => {
+    if (phase !== "input" || !canGoBack) return;
+    // Only handle for TextInput steps — Select steps use "← Back" option
+    if (step?.type === "select") return;
+
+    if (key.downArrow && !backFocused) {
+      setBackFocused(true);
+    }
+    if (key.upArrow && backFocused) {
+      setBackFocused(false);
+    }
+    if (key.return && backFocused) {
+      setBackFocused(false);
+      goBack();
+    }
+  }, { isActive: true });
+
   const isLast = stepIdx === steps.length - 1;
 
   // Autocomplete: filtered models for current query
@@ -164,7 +192,8 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
           return rest;
         });
         setStepIdx(agentIdIdx >= 0 ? agentIdIdx : stepIdx);
-        setValidationError(`✕ Invalid credentials: ${err}`);
+        const msg = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as Record<string, unknown>).message) : String(err);
+        setValidationError(`✕ Invalid credentials: ${msg}`);
         setPhase("input");
       }
     })();
@@ -190,6 +219,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
       }
       setAvailableModels(result.models);
       setValidationError(null);
+      setModelFilter(values["llm_model"] ?? "");
       setPhase("input");
       setStepIdx(stepIdx + 1);
     });
@@ -319,7 +349,29 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   }, [phase === "importing"]);
 
   function advance(value: string) {
+    if (value === "__back__") {
+      goBack();
+      return;
+    }
     const next = { ...values, [step!.id]: value };
+    const previousValue = values[step!.id];
+
+    // Branch change: clear dependent values when branching select changes
+    if (step!.id === "setup_mode" && previousValue !== undefined && previousValue !== value) {
+      delete next["agent_name"];
+      delete next["agent_id"];
+      delete next["agent_secret"];
+      delete next["_display_name"];
+    }
+
+    if (step!.id === "inference_type" && previousValue !== undefined && previousValue !== value) {
+      delete next["openrouter_api_key"];
+      delete next["llm_api_base"];
+      delete next["llm_model"];
+      delete next["bot_role"];
+      setAvailableModels([]);
+    }
+
     setValues(next);
 
     if (step!.id === "setup_mode") {
@@ -418,7 +470,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   return (
     <Box flexDirection="column" gap={1}>
       <Text>
-        STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
+        STEP {stepIdx + 1}/{steps.length}
       </Text>
 
       {validationError && (
@@ -436,9 +488,11 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         return (
           <>
             <Box>
-              <Text color={COLORS.BLUE_FRAME} bold>❯ </Text>
+              <Text color={COLORS.BLUE_FRAME} bold>{backFocused ? "  " : "❯ "}</Text>
               <TextInput
                 key="llm_model_autocomplete"
+                isDisabled={backFocused}
+                defaultValue={values[step!.id] ?? ""}
                 placeholder={step!.placeholder ?? ""}
                 suggestions={availableModels}
                 onChange={(val) => {
@@ -478,21 +532,46 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
             {!modelQuery && (
               <Text color={COLORS.GREY_NEUTRAL}>{availableModels.length} models available — type to search</Text>
             )}
+            {canGoBack && (
+              <Text color={backFocused ? COLORS.BLUE_CONTENT : COLORS.GREY_NEUTRAL}>
+                {backFocused ? "❯" : " "} ← Back
+              </Text>
+            )}
           </>
         );
       })() : step!.type === "select" && step!.options ? (
         <ThemeProvider theme={selectTheme}>
-          <Select key={step!.id} options={step!.options} onChange={(val) => advance(val)} />
+          <Select
+            key={`${step!.id}-${stepIdx}`}
+            options={(() => {
+              const savedValue = values[step!.id];
+              const base = step!.options!;
+              const ordered = savedValue
+                ? [...base.filter(o => o.value === savedValue), ...base.filter(o => o.value !== savedValue)]
+                : base;
+              return canGoBack ? [...ordered, { label: "Back", value: "__back__" }] : ordered;
+            })()}
+            onChange={(val) => advance(val)}
+          />
         </ThemeProvider>
       ) : (
-        <Box>
-          <Text color={COLORS.BLUE_FRAME} bold>❯ </Text>
-          <TextInput
-            key={step!.id}
-            placeholder={step!.placeholder ?? ""}
-            onSubmit={(val) => advance(val)}
-          />
-        </Box>
+        <>
+          <Box>
+            <Text color={COLORS.BLUE_FRAME} bold>{backFocused ? "  " : "❯ "}</Text>
+            <TextInput
+              key={step!.id}
+              isDisabled={backFocused}
+              defaultValue={values[step!.id] ?? ""}
+              placeholder={step!.placeholder ?? ""}
+              onSubmit={(val) => advance(val)}
+            />
+          </Box>
+          {canGoBack && (
+            <Text color={backFocused ? COLORS.BLUE_CONTENT : COLORS.GREY_NEUTRAL}>
+              {backFocused ? "❯" : " "} ← Back
+            </Text>
+          )}
+        </>
       )}
 
       {Object.keys(values).length > 0 && (
