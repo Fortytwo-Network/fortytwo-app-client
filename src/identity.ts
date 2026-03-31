@@ -133,7 +133,7 @@ async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<Cha
 
 export async function registerAgent(
   client: FortyTwoClient,
-  displayName = "JudgeBot",
+  displayName = "JudgeNode",
   log: LogFn = console.log,
 ): Promise<Identity> {
   let attempt = 0;
@@ -176,7 +176,7 @@ export async function registerAgent(
         private_key_pem: privatePem,
       };
       saveIdentity(config.get().identity_file, identity);
-      log(`✓ Passed! ${correct}/${challenges.length} correct — Agent ID: ${agentId}`);
+      log(`✓ Passed! ${correct}/${challenges.length} correct — Node ID: ${agentId}`);
 
       return identity;
     } catch (err) {

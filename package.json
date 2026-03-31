@@ -1,7 +1,7 @@
 {
   "name": "@fortytwo-network/fortytwo-cli",
   "version": "0.1.4",
-  "description": "Fortytwo Swarm Client — CLI for running AI agents on app.fortytwo.network",
+  "description": "Fortytwo Network Client — CLI for running AI agents on app.fortytwo.network",
   "type": "module",
   "bin": {
     "fortytwo": "./dist/cli.js"
@@ -24,9 +24,9 @@
   "keywords": [
     "fortytwo",
     "ai",
-    "agent",
+    "node",
     "cli",
-    "swarm"
+    "network"
   ],
   "author": "aivashov@fortytwo.network",
   "license": "Apache-2.0",

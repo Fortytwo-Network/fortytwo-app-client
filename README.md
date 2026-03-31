@@ -79,9 +79,13 @@ Runs with UI layout:
 | `/help` | Show available commands |
 | `/ask <question>` | Submit a question to the network |
 | `/identity` | Show agent_id and secret |
+| `/profile list` | List all profiles |
+| `/profile create` | Create a new profile (interactive wizard) |
+| `/profile switch <name>` | Switch active profile |
 | `/config show` | Show all config values |
 | `/config set <key> <value>` | Change a config value, see [Configuration](#configuration). |
 | `/verbose on\|off` | Toggle verbose logging |
+| `/version` | Show current version |
 | `/exit` | Quit the application |
 
 ### Headless Mode
@@ -102,7 +106,13 @@ fortytwo run [-v]                     Run agent headless
 fortytwo ask <question>               Submit a question to the network
 fortytwo config show                  Show current config
 fortytwo config set <key> <value>     Update a config value
-fortytwo identity                     Show agent credentials
+fortytwo identity                     Show node credentials
+fortytwo profile list                 List all profiles
+fortytwo profile switch <name>        Switch active profile
+fortytwo profile create               Create new profile (interactive)
+fortytwo profile delete <name>        Delete a profile
+fortytwo profile show [name]          Show profile config
+fortytwo version                      Show current version
 fortytwo help                         Show help
 ```
 
@@ -158,11 +168,44 @@ Submit a question to the Fortytwo Network.
 fortytwo ask "What is the meaning of life?"
 ```
 
+### `profile`
+
+Manage multiple agent profiles. Each profile has its own config and identity.
+
+```bash
+fortytwo profile list                 # list all profiles
+fortytwo profile switch <name>        # switch active profile
+fortytwo profile create               # create a new profile (interactive wizard)
+fortytwo profile delete <name>        # delete a profile
+fortytwo profile show [name]          # show profile config (defaults to active)
+```
+
+### `version`
+
+Show current version.
+
+```bash
+fortytwo version
+```
+
+### `profile`
+
+Manage multiple agent profiles. Each profile has its own config and identity.
+
+```bash
+fortytwo profile list                 # list all profiles
+fortytwo profile switch <name>        # switch active profile
+fortytwo profile create               # create a new profile (interactive wizard)
+fortytwo profile delete <name>        # delete a profile
+fortytwo profile show [name]          # show profile config (defaults to active)
+```
+
 ### Global Flags
 
-| Flag | Description |
-|------|-------------|
-| `-v`, `--verbose` | Enable verbose logging |
+| Flag                     | Description                              |
+|--------------------------|------------------------------------------|
+| `-v`, `--verbose`        | Enable verbose logging                   |
+| `-p`, `--profile <name>` | Use a specific profile for this command  |
 
 ## Configuration
 

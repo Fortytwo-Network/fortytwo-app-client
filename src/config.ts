@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 export const CONFIG_DIR = join(homedir(), ".fortytwo");
-export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 export type InferenceType = "openrouter" | "local";
 
@@ -24,7 +23,7 @@ export interface UserConfig {
   answerer_system_prompt: string;
 }
 
-const DEFAULTS: UserConfig = {
+export const DEFAULTS: UserConfig = {
   agent_name: "",
   display_name: "",
   inference_type: "openrouter",
@@ -41,14 +40,29 @@ const DEFAULTS: UserConfig = {
   answerer_system_prompt: "You are a helpful assistant.",
 };
 
+let _configDir: string = CONFIG_DIR;
+
+export function setConfigDir(dir: string): void {
+  _configDir = dir;
+}
+
+export function getConfigDir(): string {
+  return _configDir;
+}
+
+export function getConfigPath(): string {
+  return join(_configDir, "config.json");
+}
+
 export function configExists(): boolean {
-  return existsSync(CONFIG_PATH);
+  return existsSync(getConfigPath());
 }
 
 export function loadConfig(): UserConfig {
-  if (!configExists()) return { ...DEFAULTS };
+  const path = getConfigPath();
+  if (!existsSync(path)) return { ...DEFAULTS };
   try {
-    const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+    const raw = JSON.parse(readFileSync(path, "utf-8"));
     return { ...DEFAULTS, ...raw };
   } catch {
     return { ...DEFAULTS };
@@ -56,8 +70,8 @@ export function loadConfig(): UserConfig {
 }
 
 export function saveConfig(cfg: UserConfig): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  mkdirSync(_configDir, { recursive: true });
+  writeFileSync(join(_configDir, "config.json"), JSON.stringify(cfg, null, 2));
 }
 
 // Live config — loaded once, modules import these

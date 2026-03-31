@@ -12,6 +12,7 @@ import { getLlmStats } from "./llm.js";
 import { executeCommand, SUGGESTIONS } from "./commands.js";
 import { validateConfig, validateModel } from "./setup-logic.js";
 import { viewerBus } from "./event-bus.js";
+import { checkForUpdate, UPDATE_COMMAND } from "./update-check.js";
 
 import pkg from "../package.json" with { type: "json" };
 
@@ -51,7 +52,12 @@ function padRight(str: string, len: number): string {
   return str.length >= len ? str : str + " ".repeat(len - str.length);
 }
 
-export default function BotScreen() {
+interface BotScreenProps {
+  onSwitchProfile?: () => void;
+  onCreateProfile?: () => void;
+}
+
+export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScreenProps = {}) {
   const [lines, setLines] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [agentName, setAgentName] = useState("Agent");
@@ -116,9 +122,27 @@ export default function BotScreen() {
     }
 
     const results = executeCommand(raw);
-    for (const line of results) pushLine(line);
+    let switching = false;
+    let creating = false;
+    for (const line of results) {
+      if (line.startsWith("__SWITCH_PROFILE__:")) {
+        switching = true;
+        continue;
+      }
+      if (line === "__CREATE_PROFILE__") {
+        creating = true;
+        continue;
+      }
+      pushLine(line);
+    }
     pushLine(" ");
-  }, [pushLine, client]);
+    if (switching && onSwitchProfile) {
+      onSwitchProfile();
+    }
+    if (creating && onCreateProfile) {
+      onCreateProfile();
+    }
+  }, [pushLine, client, onSwitchProfile, onCreateProfile]);
 
 
   // Balance + stats + profile ticker — every 30s
@@ -173,6 +197,16 @@ export default function BotScreen() {
     }, 1000);
     return () => clearInterval(id);
   }, []);
+
+  // Update check — fire-and-forget on mount
+  useEffect(() => {
+    checkForUpdate().then(info => {
+      if (info?.updateAvailable) {
+        pushLine(chalk.red(`⚠ Your version v${info.currentVersion} is outdated! Latest: v${info.latestVersion}`));
+        pushLine(chalk.red(`  Run: ${UPDATE_COMMAND}`));
+      }
+    }).catch(() => {});
+  }, [pushLine]);
 
   // Main bot loop
   useEffect(() => {
@@ -347,7 +381,7 @@ export default function BotScreen() {
       </Box>
 
       <Text color={COLORS.BLUE_FRAME} bold>║</Text>
-      <Text color={COLORS.BLUE_FRAME}>╚═════════ <Text color={COLORS.WHITE}>{roleDisplay} <Text color={COLORS.BLUE_CONTENT}>| WATCH YOUR AGENT:</Text> <Text color={COLORS.WHITE}>http://127.0.0.1:4242</Text></Text></Text>
+      <Text color={COLORS.BLUE_FRAME}>╚═════════ <Text color={COLORS.WHITE}>{roleDisplay} <Text color={COLORS.BLUE_CONTENT}>| WATCH YOUR NODE:</Text> <Text color={COLORS.WHITE}>http://127.0.0.1:4242</Text></Text></Text>
       <Box flexDirection="column" height={visibleCount}>
         {visible.map((line, i) => {
           const globalIdx = offset + i;

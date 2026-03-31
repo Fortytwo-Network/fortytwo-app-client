@@ -2,7 +2,7 @@ import { join } from "node:path";
 import {
   type UserConfig,
   type InferenceType,
-  CONFIG_DIR,
+  getConfigDir,
 } from "./config.js";
 
 export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
@@ -121,7 +121,7 @@ export function buildConfig(values: Record<string, string>): UserConfig {
     openrouter_api_key: values.openrouter_api_key ?? "",
     llm_api_base: values.llm_api_base ?? "",
     fortytwo_api_base: "https://app.fortytwo.network/api",
-    identity_file: join(CONFIG_DIR, "identity.json"),
+    identity_file: join(getConfigDir(), "identity.json"),
     poll_interval: 120,
     llm_model: values.llm_model || (isLocal ? "" : "qwen/qwen3.5-35b-a3b"),
     llm_concurrency: 40,

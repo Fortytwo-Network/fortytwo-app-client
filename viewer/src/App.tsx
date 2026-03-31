@@ -430,7 +430,7 @@ export default function AgenticVision() {
                   </span>
                   {a.agentId && (
                     <span className="text-[15px] text-white/40 tracking-[0.15px]">
-                      Agent:{a.agentId.slice(0, 8)}
+                      Node:{a.agentId.slice(0, 8)}
                     </span>
                   )}
                   {good && (
@@ -524,7 +524,7 @@ export default function AgenticVision() {
       {!connected && (
         <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center">
           <div className="text-center">
-            <div className="text-white/40 text-[15px] mb-2">Agent disconnected</div>
+            <div className="text-white/40 text-[15px] mb-2">Node disconnected</div>
             <div className="text-white/20 text-[14px] animate-ft-pulse">Reconnecting...</div>
           </div>
         </div>
@@ -782,7 +782,7 @@ export default function AgenticVision() {
                           {isThinkingWait && !streamAnswer && (
                             <div className="px-5 py-6">
                               <div>
-                                <div className="text-[15px] text-white tracking-[0.15px] mb-1">Agent is thinking...</div>
+                                <div className="text-[15px] text-white tracking-[0.15px] mb-1">Node is thinking...</div>
                                 <div className="text-[14px] text-white/40 tracking-[0.14px]">
                                   Preparing {config?.llmModel || "LLM"} response
                                 </div>

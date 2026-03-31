@@ -40,6 +40,13 @@ vi.mock("../src/llm.js", () => ({
   resetLlmClient: vi.fn(),
 }));
 
+vi.mock("../src/profiles.js", () => ({
+  listProfiles: vi.fn().mockReturnValue([
+    { name: "default", active: true, agentName: "testbot", agentId: "test-agent-id" },
+  ]),
+  switchProfile: vi.fn(),
+}));
+
 import { executeCommand } from "../src/commands.js";
 import { setVerbose } from "../src/utils.js";
 import { resetLlmClient } from "../src/llm.js";
@@ -147,5 +154,75 @@ describe("executeCommand", () => {
   it("/config without subcommand returns usage", () => {
     const result = executeCommand("/config");
     expect(result[0]).toContain("Usage:");
+  });
+
+  describe("/profile", () => {
+    it("/profile list shows profiles", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([
+        { name: "my-judge", active: true, agentName: "MyJudge", agentId: "aaaa-bbbb-cccc" },
+        { name: "answerer", active: false, agentName: "Answerer", agentId: "dddd-eeee-ffff" },
+      ]);
+      const result = executeCommand("/profile list");
+      expect(result[0]).toBe("Profiles:");
+      expect(result[1]).toContain("my-judge");
+      expect(result[1]).toContain("(active)");
+      expect(result[2]).toContain("answerer");
+      expect(result[2]).not.toContain("(active)");
+    });
+
+    it("/profile without subcommand shows list", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([
+        { name: "default", active: true, agentName: "Bot", agentId: "id-1" },
+      ]);
+      const result = executeCommand("/profile");
+      expect(result[0]).toBe("Profiles:");
+      expect(result[1]).toContain("default");
+    });
+
+    it("/profile list returns message when no profiles", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([]);
+      const result = executeCommand("/profile list");
+      expect(result[0]).toContain("No profiles");
+    });
+
+    it("/profile switch changes profile and returns marker", async () => {
+      const { switchProfile } = await import("../src/profiles.js");
+      const result = executeCommand("/profile switch my-judge");
+      expect(switchProfile).toHaveBeenCalledWith("my-judge");
+      expect(resetLlmClient).toHaveBeenCalled();
+      expect(result[0]).toContain("__SWITCH_PROFILE__:my-judge");
+      expect(result[1]).toContain("Switched to profile");
+    });
+
+    it("/profile switch without name shows usage", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([
+        { name: "default", active: true, agentName: "Bot", agentId: "id-1" },
+      ]);
+      const result = executeCommand("/profile switch");
+      expect(result[0]).toContain("Usage:");
+      expect(result).toEqual(expect.arrayContaining([expect.stringContaining("Available profiles")]));
+    });
+
+    it("/profile switch returns error for unknown profile", async () => {
+      const { switchProfile } = await import("../src/profiles.js");
+      vi.mocked(switchProfile).mockImplementation(() => { throw new Error('Profile "nope" not found'); });
+      const result = executeCommand("/profile switch nope");
+      expect(result[0]).toContain("not found");
+    });
+
+    it("/profile create returns create marker", () => {
+      const result = executeCommand("/profile create");
+      expect(result[0]).toBe("__CREATE_PROFILE__");
+      expect(result[1]).toContain("Starting profile creation");
+    });
+
+    it("/profile unknown subcommand shows profile help", () => {
+      const result = executeCommand("/profile unknown");
+      expect(result[0]).toContain("Profile commands:");
+    });
   });
 });

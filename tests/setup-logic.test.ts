@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../src/config.js", () => ({
   CONFIG_DIR: "/tmp/.fortytwo",
+  getConfigDir: () => "/tmp/.fortytwo",
 }));
 
 import { validateModel, buildConfig, OPENROUTER_BASE } from "../src/setup-logic.js";

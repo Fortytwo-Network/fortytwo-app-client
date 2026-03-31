@@ -2,14 +2,14 @@ import { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import { TextInput, Select, ThemeProvider, extendTheme, defaultTheme } from "@inkjs/ui";
 import {
-  saveConfig,
   reloadConfig,
   get as getConfig,
   type InferenceType,
 } from "./config.js";
 import { FortyTwoClient } from "./api-client.js";
-import { registerAgent, saveIdentity } from "./identity.js";
+import { registerAgent } from "./identity.js";
 import { validateConfig, validateModel, fetchModels, buildConfig } from "./setup-logic.js";
+import { createProfile, sanitizeProfileName } from "./profiles.js";
 import { useLoader } from "./loader.js";
 import { COLORS, ROLE_OPTIONS } from "./constants.js";
 import { getRoleLabel } from "./utils.js";
@@ -49,8 +49,8 @@ const selectTheme = extendTheme(defaultTheme, {
 });
 
 const SETUP_MODE_OPTIONS = [
-  { label: "Register new agent", value: "new" },
-  { label: "Import existing agent", value: "import" },
+  { label: "Register new node", value: "new" },
+  { label: "Import existing node", value: "import" },
 ];
 
 const INFERENCE_OPTIONS = [
@@ -65,11 +65,11 @@ function buildSteps(inferenceType?: InferenceType, setupMode?: string): StepDef[
 
   if (setupMode === "import") {
     steps.push(
-      { id: "agent_id", label: "Agent ID", type: "text", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
-      { id: "agent_secret", label: "Agent Secret", type: "text", placeholder: "your-secret", mask: true },
+      { id: "agent_id", label: "Node ID", type: "text", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+      { id: "agent_secret", label: "Node Secret", type: "text", placeholder: "your-secret", mask: true },
     );
   } else {
-    steps.push({ id: "agent_name", label: "Agent Name", type: "text", placeholder: "JudgeBot" });
+    steps.push({ id: "agent_name", label: "Node Name", type: "text", placeholder: "JudgeNode" });
   }
 
   steps.push({ id: "inference_type", label: "Inference Provider", type: "select", options: INFERENCE_OPTIONS });
@@ -104,9 +104,10 @@ type Phase = "input" | "validating" | "validating_creds" | "fetching_models" | "
 interface OnboardProps {
   onDone: () => void;
   skipToRegistration?: boolean;
+  onCancel?: () => void;
 }
 
-export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
+export default function Onboard({ onDone, skipToRegistration, onCancel }: OnboardProps) {
   const [stepIdx, setStepIdx] = useState(0);
   const [values, setValues] = useState<Record<string, string>>({});
   const [inferenceType, setInferenceType] = useState<InferenceType | undefined>();
@@ -258,7 +259,8 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         if (!skipToRegistration) {
           setRegLog(["↳ Saving config..."]);
           const cfg = buildConfig(values);
-          saveConfig(cfg);
+          const profileName = sanitizeProfileName(values.agent_name || "default");
+          createProfile(profileName, cfg);
           reloadConfig();
         }
 
@@ -290,7 +292,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         }
 
         const client = new FortyTwoClient();
-        const displayName = cfg.display_name || values.agent_name || "JudgeBot";
+        const displayName = cfg.display_name || values.agent_name || "JudgeNode";
         await registerAgent(client, displayName, (msg) => {
           if (cancelled) return;
           if (msg.startsWith("~")) {
@@ -318,7 +320,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     return () => { cancelled = true; };
   }, [phase === "registering"]);
 
-  // Import existing agent
+  // Import existing node
   useEffect(() => {
     if (phase !== "importing") return;
 
@@ -328,16 +330,15 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
       try {
         setRegLog(["↳ Saving config..."]);
         const cfg = buildConfig(values);
-        saveConfig(cfg);
-        reloadConfig();
-
-        saveIdentity(getConfig().identity_file, {
+        const profileName = sanitizeProfileName(values._display_name || values.agent_id || "default");
+        createProfile(profileName, cfg, {
           agent_id: values.agent_id,
           secret: values.agent_secret,
         });
+        reloadConfig();
 
         const name = values._display_name || values.agent_id;
-        setRegLog((prev) => [...prev, `✓ Agent "${name}" (${values.agent_id}) imported!`]);
+        setRegLog((prev) => [...prev, `✓ Node "${name}" (${values.agent_id}) imported!`]);
         onDone();
       } catch (err) {
         if (cancelled) return;
@@ -349,6 +350,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   }, [phase === "importing"]);
 
   function advance(value: string) {
+    if (value === "__cancel__" && onCancel) {
+      onCancel();
+      return;
+    }
     if (value === "__back__") {
       goBack();
       return;
@@ -445,12 +450,12 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "registering" || phase === "importing") {
     const displayLine = (line: string) => line.replace(/^\[progress]/, "");
     const last = regLog.length - 1;
-    const header = phase === "importing" ? "IMPORT AGENT" : "REGISTRATION";
+    const header = phase === "importing" ? "IMPORT NODE" : "REGISTRATION";
 
     return (
       <Box flexDirection="column" gap={1}>
         <Text bold>▒▓░ {header} ░▓▒</Text>
-        {regLog.length === 0 && <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> ⎔ Registering Agent...</Text>}
+        {regLog.length === 0 && <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> ⎔ Registering Node...</Text>}
         <Box flexDirection="column">
           {regLog.map((line, i) => {
             const isCurrent = i === last;
@@ -549,7 +554,9 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
               const ordered = savedValue
                 ? [...base.filter(o => o.value === savedValue), ...base.filter(o => o.value !== savedValue)]
                 : base;
-              return canGoBack ? [...ordered, { label: "Back", value: "__back__" }] : ordered;
+              if (canGoBack) return [...ordered, { label: "Back", value: "__back__" }];
+              if (onCancel && stepIdx === 0) return [...ordered, { label: "Back", value: "__cancel__" }];
+              return ordered;
             })()}
             onChange={(val) => advance(val)}
           />

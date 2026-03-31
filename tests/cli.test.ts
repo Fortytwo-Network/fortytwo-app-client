@@ -14,9 +14,12 @@ vi.mock("../src/config.js", () => ({
     bot_role: "JUDGE",
     answerer_system_prompt: "You are a helpful assistant.",
   }),
+  CONFIG_DIR: "/tmp/.fortytwo",
   configExists: vi.fn().mockReturnValue(true),
   saveConfig: vi.fn(),
   reloadConfig: vi.fn(),
+  setConfigDir: vi.fn(),
+  getConfigDir: vi.fn().mockReturnValue("/tmp/.fortytwo"),
 }));
 
 const mockClient = {
@@ -73,6 +76,18 @@ vi.mock("../src/setup-logic.js", () => ({
 vi.mock("../src/utils.js", () => ({
   setVerbose: vi.fn(),
   log: vi.fn(),
+}));
+
+vi.mock("../src/profiles.js", () => ({
+  initProfiles: vi.fn(),
+  setProfileOverride: vi.fn(),
+  listProfiles: vi.fn().mockReturnValue([]),
+  switchProfile: vi.fn(),
+  deleteProfile: vi.fn(),
+  createProfile: vi.fn(),
+  sanitizeProfileName: vi.fn((name: string) => name.toLowerCase().replace(/\s+/g, "-")),
+  getProfileDir: vi.fn().mockReturnValue("/tmp/.fortytwo/profiles/default"),
+  profileExists: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock("../src/index.js", () => ({}));
@@ -168,10 +183,10 @@ describe("cli", () => {
     ];
 
     it("completes full setup flow", async () => {
-      const { saveConfig } = await import("../src/config.js");
+      const { createProfile } = await import("../src/profiles.js");
       const { registerAgent } = await import("../src/identity.js");
       await runCli(["setup", ...setupFlags]);
-      expect(saveConfig).toHaveBeenCalled();
+      expect(createProfile).toHaveBeenCalled();
       expect(registerAgent).toHaveBeenCalled();
       const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
       expect(output).toContain("Setup complete");
@@ -212,8 +227,8 @@ describe("cli", () => {
 
     it("works with local inference", async () => {
       await runCli(["setup", "--name", "B", "--inference-type", "local", "--llm-api-base", "http://localhost:11434/v1", "--model", "m", "--role", "JUDGE", "--skip-validation"]);
-      const { saveConfig } = await import("../src/config.js");
-      expect(saveConfig).toHaveBeenCalled();
+      const { createProfile } = await import("../src/profiles.js");
+      expect(createProfile).toHaveBeenCalled();
     });
   });
 
@@ -229,11 +244,9 @@ describe("cli", () => {
     ];
 
     it("completes full import flow", async () => {
-      const { saveConfig } = await import("../src/config.js");
-      const { saveIdentity } = await import("../src/identity.js");
+      const { createProfile } = await import("../src/profiles.js");
       await runCli(["import", ...importFlags]);
-      expect(saveConfig).toHaveBeenCalled();
-      expect(saveIdentity).toHaveBeenCalled();
+      expect(createProfile).toHaveBeenCalled();
       expect(mockClient.login).toHaveBeenCalledWith("uuid-123", "sec-456");
     });
 
@@ -275,8 +288,8 @@ describe("cli", () => {
 
     it("works with local inference", async () => {
       await runCli(["import", "--agent-id", "a", "--secret", "s", "--inference-type", "local", "--llm-api-base", "http://localhost:11434/v1", "--model", "m", "--role", "JUDGE", "--skip-validation"]);
-      const { saveConfig } = await import("../src/config.js");
-      expect(saveConfig).toHaveBeenCalled();
+      const { createProfile } = await import("../src/profiles.js");
+      expect(createProfile).toHaveBeenCalled();
     });
   });
 
