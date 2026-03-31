@@ -37,7 +37,7 @@ vi.mock("openai", () => {
 const mockLlmCfg: Record<string, any> = {
   inference_type: "openrouter",
   openrouter_api_key: "test-key",
-  llm_model: "test-model",
+  model_name: "test-model",
   llm_concurrency: 2,
   llm_timeout: 10,
 };
@@ -313,14 +313,14 @@ describe("llm", () => {
       APIConnectionError = (mod as any).APIConnectionError;
       APIConnectionTimeoutError = (mod as any).APIConnectionTimeoutError;
       NotFoundError = (mod as any).NotFoundError;
-      mockLlmCfg.inference_type = "local";
-      mockLlmCfg.llm_api_base = "http://localhost:11434/v1";
+      mockLlmCfg.inference_type = "self-hosted";
+      mockLlmCfg.self_hosted_api_base = "http://localhost:11434/v1";
       resetLlmClient();
     });
 
     afterEach(() => {
       mockLlmCfg.inference_type = "openrouter";
-      delete mockLlmCfg.llm_api_base;
+      delete mockLlmCfg.self_hosted_api_base;
       resetLlmClient();
     });
 

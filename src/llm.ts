@@ -59,7 +59,7 @@ let semaphore: Semaphore | null = null;
 function getSemaphore(): Semaphore {
   const cfg = config.get();
   if (!semaphore) {
-    const max = cfg.inference_type === "local"
+    const max = cfg.inference_type === "self-hosted"
       ? Math.max(1, Math.floor(cfg.llm_concurrency / 5))
       : cfg.llm_concurrency;
     semaphore = new Semaphore(max);
@@ -132,9 +132,9 @@ let openaiClient: OpenAI | null = null;
 function getClient(): OpenAI {
   if (openaiClient) return openaiClient;
   const cfg = config.get();
-  const isLocal = cfg.inference_type === "local";
+  const isLocal = cfg.inference_type === "self-hosted";
   openaiClient = new OpenAI({
-    baseURL: isLocal ? cfg.llm_api_base.replace(/\/+$/, "") : OPENROUTER_BASE,
+    baseURL: isLocal ? cfg.self_hosted_api_base.replace(/\/+$/, "") : OPENROUTER_BASE,
     apiKey: isLocal ? "EMPTY" : cfg.openrouter_api_key,
     timeout: cfg.llm_timeout * 1000,
     maxRetries: 2,
@@ -149,10 +149,10 @@ function getClient(): OpenAI {
 
 function mapLlmError(err: unknown): Error {
   const cfg = config.get();
-  const isLocal = cfg.inference_type === "local";
+  const isLocal = cfg.inference_type === "self-hosted";
 
-  if (isLocal && cfg.llm_api_base) {
-    const base = cfg.llm_api_base;
+  if (isLocal && cfg.self_hosted_api_base) {
+    const base = cfg.self_hosted_api_base;
     if (err instanceof APIConnectionTimeoutError) {
       return new Error(`Local LLM at ${base} timed out — is the model loaded? Check your inference server.`);
     }
@@ -160,7 +160,7 @@ function mapLlmError(err: unknown): Error {
       return new Error(`Cannot connect to local LLM at ${base} — is the server running? Start LM Studio / Ollama / vLLM and try again.`);
     }
     if (err instanceof NotFoundError) {
-      return new Error(`Model "${cfg.llm_model}" not found at ${base} — load the model in your inference server first.`);
+      return new Error(`Model "${cfg.model_name}" not found at ${base} — load the model in your inference server first.`);
     }
   }
 
@@ -172,16 +172,16 @@ function mapLlmError(err: unknown): Error {
       return new Error(`OpenRouter authentication failed — your API key is invalid or expired. Update it with /config set openrouter_api_key <key>.`);
     }
     if (err instanceof PermissionDeniedError) {
-      return new Error(`OpenRouter rejected the request — your input was flagged by moderation for model "${cfg.llm_model}".`);
+      return new Error(`OpenRouter rejected the request — your input was flagged by moderation for model "${cfg.model_name}".`);
     }
     if (err instanceof BadRequestError) {
-      return new Error(`OpenRouter bad request — check your model name "${cfg.llm_model}" or request parameters.`);
+      return new Error(`OpenRouter bad request — check your model name "${cfg.model_name}" or request parameters.`);
     }
     if (err instanceof APIError && err.status === 402) {
       return new Error(`OpenRouter credits exhausted — add funds at openrouter.ai or switch to a free model.`);
     }
     if (err instanceof APIError && (err.status === 502 || err.status === 503)) {
-      return new Error(`OpenRouter: model "${cfg.llm_model}" is temporarily unavailable — try again later or switch to another model.`);
+      return new Error(`OpenRouter: model "${cfg.model_name}" is temporarily unavailable — try again later or switch to another model.`);
     }
     if (err instanceof APIConnectionTimeoutError) {
       return new Error(`OpenRouter request timed out — the model may be overloaded. Try again or increase llm_timeout.`);
@@ -199,7 +199,7 @@ async function callLlmApi(
   purpose: LlmPurpose = "other",
 ): Promise<string> {
   const cfg = config.get();
-  const isLocal = cfg.inference_type === "local";
+  const isLocal = cfg.inference_type === "self-hosted";
 
   if (!isLocal && !cfg.openrouter_api_key) {
     throw new Error("OPENROUTER_API_KEY is not set");
@@ -213,11 +213,11 @@ async function callLlmApi(
   try {
     if (signal?.aborted) throw new Error("LLM call aborted");
 
-    verbose(`→ model=${cfg.llm_model} msgs=${messages.length} temp=${temperature}`);
+    verbose(`→ model=${cfg.model_name} msgs=${messages.length} temp=${temperature}`);
 
     const resp = await client.chat.completions.create(
       {
-        model: cfg.llm_model,
+        model: cfg.model_name,
         messages,
         temperature,
       },
@@ -228,7 +228,7 @@ async function callLlmApi(
     );
 
     const content = (resp.choices[0].message.content ?? "").trim();
-    verbose(`← ${cfg.llm_model} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
+    verbose(`← ${cfg.model_name} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
     recordSuccess(purpose, Date.now() - start);
     return content;
   } catch (err) {
@@ -366,11 +366,11 @@ export async function generateAnswer(
   try {
     if (signal?.aborted) throw new Error("LLM call aborted");
 
-    verbose(`→ [stream] model=${cfg.llm_model} temp=0.7`);
+    verbose(`→ [stream] model=${cfg.model_name} temp=0.7`);
 
     const stream = await client.chat.completions.create(
       {
-        model: cfg.llm_model,
+        model: cfg.model_name,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: problem },
@@ -404,7 +404,7 @@ export async function generateAnswer(
     const finalTps = elapsed > 0 ? tokenCount / elapsed : 0;
     const roundedTps = Math.round(finalTps * 10) / 10;
 
-    verbose(`← [stream] ${cfg.llm_model} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
+    verbose(`← [stream] ${cfg.model_name} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
     recordSuccess("generation", Date.now() - start);
 
     const thinkMatch = content.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);

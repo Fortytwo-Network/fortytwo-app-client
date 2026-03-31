@@ -7,11 +7,11 @@ vi.mock("../src/config.js", () => ({
     fortytwo_api_base: "https://api.test.com",
     identity_file: "/tmp/identity.json",
     poll_interval: 60,
-    llm_model: "test-model",
+    model_name: "test-model",
     llm_concurrency: 5,
     llm_timeout: 10,
     min_balance: 5.0,
-    bot_role: "JUDGE",
+    node_role: "JUDGE",
     answerer_system_prompt: "You are a helpful assistant.",
   }),
   CONFIG_DIR: "/tmp/.fortytwo",
@@ -23,15 +23,15 @@ vi.mock("../src/config.js", () => ({
 }));
 
 const mockClient = {
-  agentId: "agent-1",
+  nodeId: "agent-1",
   login: vi.fn().mockResolvedValue({}),
-  getAgent: vi.fn().mockResolvedValue({ profile: { display_name: "Bot" } }),
+  getAgent: vi.fn().mockResolvedValue({ profile: { node_display_name: "Bot" } }),
   createQuery: vi.fn().mockResolvedValue({ id: "q-1" }),
 };
 
 vi.mock("../src/api-client.js", () => {
   class MockFortyTwoClient {
-    agentId = mockClient.agentId;
+    nodeId = mockClient.nodeId;
     login = mockClient.login;
     getAgent = mockClient.getAgent;
     createQuery = mockClient.createQuery;
@@ -40,9 +40,9 @@ vi.mock("../src/api-client.js", () => {
 });
 
 vi.mock("../src/identity.js", () => ({
-  loadIdentity: vi.fn().mockReturnValue({ agent_id: "agent-1", secret: "sec" }),
+  loadIdentity: vi.fn().mockReturnValue({ node_id: "agent-1", node_secret: "sec" }),
   saveIdentity: vi.fn(),
-  registerAgent: vi.fn().mockResolvedValue({ agent_id: "new-agent", secret: "new-sec" }),
+  registerAgent: vi.fn().mockResolvedValue({ node_id: "new-agent", node_secret: "new-sec" }),
 }));
 
 vi.mock("../src/main.js", () => ({
@@ -50,25 +50,25 @@ vi.mock("../src/main.js", () => ({
 }));
 
 vi.mock("../src/commands.js", () => ({
-  executeCommand: vi.fn().mockReturnValue(["Config:", "  bot_role: JUDGE"]),
+  executeCommand: vi.fn().mockReturnValue(["Config:", "  node_role: JUDGE"]),
 }));
 
 vi.mock("../src/setup-logic.js", () => ({
   validateModel: vi.fn().mockResolvedValue({ ok: true }),
   buildConfig: vi.fn().mockReturnValue({
-    agent_name: "Bot",
-    display_name: "Bot",
+    node_name: "Bot",
+    node_display_name: "Bot",
     inference_type: "openrouter",
     openrouter_api_key: "key",
-    llm_api_base: "",
+    self_hosted_api_base: "",
     fortytwo_api_base: "https://app.fortytwo.network/api",
     identity_file: "/tmp/identity.json",
     poll_interval: 120,
-    llm_model: "test",
+    model_name: "test",
     llm_concurrency: 40,
     llm_timeout: 120,
     min_balance: 5.0,
-    bot_role: "JUDGE",
+    node_role: "JUDGE",
     answerer_system_prompt: "You are a helpful assistant.",
   }),
 }));
@@ -112,10 +112,10 @@ describe("cli", () => {
     const { loadIdentity } = await import("../src/identity.js");
     const { validateModel } = await import("../src/setup-logic.js");
     vi.mocked(configExists).mockReturnValue(true);
-    vi.mocked(loadIdentity).mockReturnValue({ agent_id: "agent-1", secret: "sec" });
+    vi.mocked(loadIdentity).mockReturnValue({ node_id: "agent-1", node_secret: "sec" });
     vi.mocked(validateModel).mockResolvedValue({ ok: true });
     mockClient.login.mockResolvedValue({});
-    mockClient.getAgent.mockResolvedValue({ profile: { display_name: "Bot" } });
+    mockClient.getAgent.mockResolvedValue({ profile: { node_display_name: "Bot" } });
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
@@ -157,8 +157,8 @@ describe("cli", () => {
 
     it("config set calls executeCommand", async () => {
       const { executeCommand } = await import("../src/commands.js");
-      await runCli(["config", "set", "bot_role", "ANSWERER"]);
-      expect(executeCommand).toHaveBeenCalledWith("/config set bot_role ANSWERER");
+      await runCli(["config", "set", "node_role", "ANSWERER"]);
+      expect(executeCommand).toHaveBeenCalledWith("/config set node_role ANSWERER");
     });
 
     it("config set without key/value exits", async () => {
@@ -174,11 +174,11 @@ describe("cli", () => {
 
   describe("setup", () => {
     const setupFlags = [
-      "--name", "TestBot",
+      "--node-name", "TestBot",
       "--inference-type", "openrouter",
       "--api-key", "sk-or-xxx",
-      "--model", "test-model",
-      "--role", "JUDGE",
+      "--model-name", "test-model",
+      "--node-role", "JUDGE",
       "--skip-validation",
     ];
 
@@ -194,39 +194,39 @@ describe("cli", () => {
 
     it("validates model when no --skip-validation", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
-      await runCli(["setup", "--name", "B", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
+      await runCli(["setup", "--node-name", "B", "--inference-type", "openrouter", "--openrouter-api-key", "k", "--model-name", "m", "--node-role", "JUDGE"]);
       expect(validateModel).toHaveBeenCalled();
     });
 
     it("exits on validation failure", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
       vi.mocked(validateModel).mockResolvedValue({ ok: false, error: "not found" });
-      await runCli(["setup", "--name", "B", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
+      await runCli(["setup", "--node-name", "B", "--inference-type", "openrouter", "--openrouter-api-key", "k", "--model-name", "m", "--node-role", "JUDGE"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on missing --name flag", async () => {
-      await runCli(["setup", "--inference-type", "openrouter", "--model", "m", "--role", "JUDGE"]);
+      await runCli(["setup", "--inference-type", "openrouter", "--model-name", "m", "--node-role", "JUDGE"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on invalid inference type", async () => {
-      await runCli(["setup", "--name", "B", "--inference-type", "invalid", "--model", "m", "--role", "JUDGE"]);
+      await runCli(["setup", "--node-name", "B", "--inference-type", "invalid", "--model-name", "m", "--node-role", "JUDGE"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on invalid role", async () => {
-      await runCli(["setup", "--name", "B", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "INVALID"]);
+      await runCli(["setup", "--node-name", "B", "--inference-type", "openrouter", "--openrouter-api-key", "k", "--model-name", "m", "--node-role", "INVALID"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
-    it("requires llm-api-base for local inference", async () => {
-      await runCli(["setup", "--name", "B", "--inference-type", "local", "--model", "m", "--role", "JUDGE"]);
+    it("requires self-hosted-api-base for local inference", async () => {
+      await runCli(["setup", "--node-name", "B", "--inference-type", "self-hosted", "--model-name", "m", "--node-role", "JUDGE"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("works with local inference", async () => {
-      await runCli(["setup", "--name", "B", "--inference-type", "local", "--llm-api-base", "http://localhost:11434/v1", "--model", "m", "--role", "JUDGE", "--skip-validation"]);
+      await runCli(["setup", "--node-name", "B", "--inference-type", "self-hosted", "--self-hosted-api-base", "http://localhost:11434/v1", "--model-name", "m", "--node-role", "JUDGE", "--skip-validation"]);
       const { createProfile } = await import("../src/profiles.js");
       expect(createProfile).toHaveBeenCalled();
     });
@@ -234,12 +234,12 @@ describe("cli", () => {
 
   describe("import", () => {
     const importFlags = [
-      "--agent-id", "uuid-123",
-      "--secret", "sec-456",
+      "--node-id", "uuid-123",
+      "--node-secret", "sec-456",
       "--inference-type", "openrouter",
-      "--api-key", "sk-or-xxx",
-      "--model", "test-model",
-      "--role", "JUDGE",
+      "--openrouter-api-key", "sk-or-xxx",
+      "--model-name", "test-model",
+      "--node-role", "JUDGE",
       "--skip-validation",
     ];
 
@@ -257,18 +257,18 @@ describe("cli", () => {
     });
 
     it("exits on invalid inference type", async () => {
-      await runCli(["import", "--agent-id", "a", "--secret", "s", "--inference-type", "bad", "--model", "m", "--role", "JUDGE"]);
+      await runCli(["import", "--node-id", "a", "--node-secret", "s", "--inference-type", "bad", "--model-name", "m", "--node-role", "JUDGE"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on invalid role", async () => {
-      await runCli(["import", "--agent-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "BAD"]);
+      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "BAD"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("validates model when no --skip-validation", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
-      await runCli(["import", "--agent-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
+      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
       expect(validateModel).toHaveBeenCalled();
     });
 
@@ -282,12 +282,12 @@ describe("cli", () => {
     it("exits on import validation failure", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
       vi.mocked(validateModel).mockResolvedValue({ ok: false, error: "bad model" });
-      await runCli(["import", "--agent-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
+      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("works with local inference", async () => {
-      await runCli(["import", "--agent-id", "a", "--secret", "s", "--inference-type", "local", "--llm-api-base", "http://localhost:11434/v1", "--model", "m", "--role", "JUDGE", "--skip-validation"]);
+      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "self-hosted", "--self-hosted-api-base", "http://localhost:11434/v1", "--model", "m", "--role", "JUDGE", "--skip-validation"]);
       const { createProfile } = await import("../src/profiles.js");
       expect(createProfile).toHaveBeenCalled();
     });

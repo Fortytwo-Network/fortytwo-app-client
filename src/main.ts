@@ -13,14 +13,14 @@ import { viewerBus, type VisibleQuery } from "./event-bus.js";
 export async function initViewerBus(
   client: FortyTwoClient,
   cfg: ReturnType<typeof config.get>,
-  agentId: string,
+  nodeId: string,
 ): Promise<void> {
   viewerBus.setConfig({
-    agentId,
-    llmModel: cfg.llm_model,
+    nodeId,
+    modelName: cfg.model_name,
     inferenceType: cfg.inference_type,
-    provider: cfg.inference_type === "local"
-      ? cfg.llm_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+    provider: cfg.inference_type === "self-hosted"
+      ? cfg.self_hosted_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")
       : "OpenRouter",
     cycleIntervalMs: cfg.poll_interval * 1000,
     autoRestart: true,
@@ -62,8 +62,8 @@ export class InsufficientFundsError extends Error {
   }
 }
 
-function shouldAnswer(queryId: string, agentId: string): boolean {
-  const hash = createHash("sha256").update(queryId + agentId).digest("hex");
+function shouldAnswer(queryId: string, nodeId: string): boolean {
+  const hash = createHash("sha256").update(queryId + nodeId).digest("hex");
   return parseInt(hash.slice(-8), 16) % 2 === 0;
 }
 
@@ -145,7 +145,7 @@ export async function processChallenges(client: FortyTwoClient, dualMode = false
     if (ch.has_voted) return false;
     if (inFlight.has(String(ch.id))) return false;
     const queryId = String(ch.query_id ?? "");
-    if (dualMode && queryId && shouldAnswer(queryId, client.agentId)) return false;
+    if (dualMode && queryId && shouldAnswer(queryId, client.nodeId)) return false;
     const effectiveDeadline = (ch.effective_voting_deadline ?? ch.judging_deadline_at ?? "") as string;
     const remaining = secondsUntilDeadline(effectiveDeadline);
     if (remaining > 0 && remaining < config.MIN_DEADLINE_SECONDS) {
@@ -202,7 +202,7 @@ export async function processQueries(client: FortyTwoClient, dualMode = false): 
   const eligible = queries.filter((q) => {
     const queryId = String(q.id);
     if (inFlight.has(queryId)) return false;
-    if (dualMode && !shouldAnswer(queryId, client.agentId)) return false;
+    if (dualMode && !shouldAnswer(queryId, client.nodeId)) return false;
     const createdAtStr = (q.created_at ?? "") as string;
     const decisionDeadlineStr = (q.decision_deadline_at ?? "") as string;
     const answerRemaining = answerRemainingSeconds(createdAtStr, decisionDeadlineStr);
@@ -223,7 +223,7 @@ export async function processQueries(client: FortyTwoClient, dualMode = false): 
 
 export async function runCycle(client: FortyTwoClient): Promise<number> {
   const cfg = config.get();
-  const role = cfg.bot_role;
+  const role = cfg.node_role;
   let total = 0;
 
   if (role === "JUDGE") {
@@ -237,7 +237,7 @@ export async function runCycle(client: FortyTwoClient): Promise<number> {
     ]);
     total += q + c;
   } else {
-    log(`Unknown BOT_ROLE: ${role}`);
+    log(`Unknown NODE_ROLE: ${role}`);
   }
 
   return total;
@@ -249,35 +249,35 @@ export async function main(signal?: AbortSignal): Promise<void> {
     setVerbose(true);
   }
 
-  if (cfg.inference_type !== "local" && !cfg.openrouter_api_key) {
+  if (cfg.inference_type !== "self-hosted" && !cfg.openrouter_api_key) {
     log("OPENROUTER_API_KEY not set. Run onboarding first.");
     process.exit(1);
   }
 
-  const role = cfg.bot_role;
+  const role = cfg.node_role;
   if (!["JUDGE", "ANSWERER", "ANSWERER_AND_JUDGE"].includes(role)) {
-    log(`Invalid BOT_ROLE: ${role}`);
+    log(`Invalid NODE_ROLE: ${role}`);
     process.exit(1);
   }
 
-  log(`↳ Bot role: ${getRoleLabel(role)}`);
+  log(`↳ Node role: ${getRoleLabel(role)}`);
 
   const validation = await validateModel({
     inference_type: cfg.inference_type,
-    llm_api_base: cfg.llm_api_base,
-    openrouter_api_key: cfg.openrouter_api_key,
-    llm_model: cfg.llm_model,
+    self_hosted_api_base: cfg.self_hosted_api_base,
+    fortytwo_api_base: cfg.fortytwo_api_base,
+    model_name: cfg.model_name,
   });
   if (!validation.ok) {
     log(`Model check failed: ${validation.error}`);
     process.exit(1);
   }
-  log(`✓ Model OK: ${cfg.llm_model}`);
+  log(`✓ Model OK: ${cfg.model_name}`);
 
   const client = new FortyTwoClient();
 
   try {
-    const identity = loadIdentity(cfg.identity_file);
+    const identity = loadIdentity(cfg.node_identity_file);
 
     if (!identity) {
       log("No identity found. Run onboarding first.");
@@ -285,8 +285,8 @@ export async function main(signal?: AbortSignal): Promise<void> {
     }
 
     viewerBus.setState("AUTHENTICATING");
-    await client.login(identity.agent_id, identity.secret);
-    await initViewerBus(client, cfg, identity.agent_id);
+    await client.login(identity.node_id, identity.node_secret);
+    await initViewerBus(client, cfg, identity.node_id);
 
     log(`✓ Starting polling loop (interval: ${cfg.poll_interval}s)`);
     let cycles = 0;
@@ -317,8 +317,8 @@ export async function main(signal?: AbortSignal): Promise<void> {
         if (errMsg.toLowerCase().includes("inactive") || errMsg.toLowerCase().includes("deactivated")) {
           log(`Account deactivated — reactivating...`);
           viewerBus.updateStats({ accountInactive: true });
-          await reactivateAccount(client, identity.agent_id, identity.secret);
-          await client.login(identity.agent_id, identity.secret);
+          await reactivateAccount(client, identity.node_id, identity.node_secret);
+          await client.login(identity.node_id, identity.node_secret);
           viewerBus.updateStats({ accountInactive: false });
           log("Reactivation complete!");
           continue;

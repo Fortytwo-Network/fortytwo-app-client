@@ -141,7 +141,7 @@ export async function judgeChallenge(
     answers: answers.map((a) => ({
       id: a.id,
       content: a.decrypted_content ?? "",
-      agentId: a.agent_id as string | undefined,
+      nodeId: a.agent_id as string | undefined,
     })),
     comparisons: [],
     finalRankings: [],

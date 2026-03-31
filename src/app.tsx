@@ -26,7 +26,7 @@ type Screen = "onboard" | "register" | "running";
 function getInitialScreen(): Screen {
   if (!configExists()) return "onboard";
   const cfg = getConfig();
-  if (!cfg.identity_file || !loadIdentity(cfg.identity_file)) return "register";
+  if (!cfg.node_identity_file || !loadIdentity(cfg.node_identity_file)) return "register";
   return "running";
 }
 

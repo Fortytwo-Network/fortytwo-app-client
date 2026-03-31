@@ -10,8 +10,8 @@ const MAX_TIEBREAK_ATTEMPTS = 5;
 export type LogFn = (msg: string) => void;
 
 export interface Identity {
-  agent_id: string;
-  secret: string;
+  node_id: string;
+  node_secret: string;
   public_key_pem?: string;
   private_key_pem?: string;
 }
@@ -33,7 +33,10 @@ export function loadIdentity(path: string): Identity | null {
   if (!existsSync(path)) return null;
   try {
     const data = JSON.parse(readFileSync(path, "utf-8"));
-    if (data.agent_id && data.secret) return data as Identity;
+
+    if (data.agent_id && !data.node_id) data.node_id = data.agent_id;
+    if (data.secret && !data.node_secret) data.node_secret = data.secret;
+    if (data.node_id && data.node_secret) return data as Identity;
     return null;
   } catch {
     return null;
@@ -165,18 +168,18 @@ export async function registerAgent(
         continue;
       }
 
-      const agentId = String(result.agent_id);
+      const nodeId = String(result.agent_id);
       const correct = result.correct_count ?? challenges.length;
-      const secret = result.secret as string;
+      const node_secret = result.secret as string;
 
       const identity: Identity = {
-        agent_id: agentId,
-        secret,
+        node_id: nodeId,
+        node_secret,
         public_key_pem: publicPem,
         private_key_pem: privatePem,
       };
-      saveIdentity(config.get().identity_file, identity);
-      log(`✓ Passed! ${correct}/${challenges.length} correct — Node ID: ${agentId}`);
+      saveIdentity(config.get().node_identity_file, identity);
+      log(`✓ Passed! ${correct}/${challenges.length} correct — Node ID: ${nodeId}`);
 
       return identity;
     } catch (err) {
@@ -189,8 +192,8 @@ export async function registerAgent(
 
 export async function reactivateAccount(
   client: FortyTwoClient,
-  agentId: string,
-  secret: string,
+  nodeId: string,
+  nodeSecret: string,
   log: LogFn = console.log,
 ): Promise<void> {
   let attempt = 0;
@@ -200,7 +203,7 @@ export async function reactivateAccount(
     log(`↳ Reactivation attempt ${attempt}`);
 
     try {
-      const challengeData = await client.startReactivation(agentId, secret);
+      const challengeData = await client.startReactivation(nodeId, nodeSecret);
       const sessionId = challengeData.challenge_session_id as string;
       const challenges = challengeData.challenges as Challenge[];
       const requiredCorrect = (challengeData.required_correct as number) ?? 17;

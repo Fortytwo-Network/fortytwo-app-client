@@ -59,9 +59,9 @@ describe("identity", () => {
 
     it("returns identity when file has valid data", () => {
       vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ agent_id: "a1", secret: "s1" }));
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ node_id: "a1", node_secret: "s1" }));
       const id = loadIdentity("id.json");
-      expect(id!.agent_id).toBe("a1");
+      expect(id!.node_id).toBe("a1");
     });
 
     it("returns null when missing required fields", () => {
@@ -79,7 +79,7 @@ describe("identity", () => {
 
   describe("saveIdentity", () => {
     it("writes identity as formatted JSON", () => {
-      saveIdentity("out.json", { agent_id: "a1", secret: "s1" });
+      saveIdentity("out.json", { node_id: "a1", node_secret: "s1" });
       expect(writeFileSync).toHaveBeenCalledWith("out.json", expect.any(String));
     });
   });
@@ -99,8 +99,8 @@ describe("identity", () => {
 
       vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
       const identity = await registerAgent(client, "TestBot", vi.fn());
-      expect(identity.agent_id).toBe("new-agent");
-      expect(identity.secret).toBe("new-secret");
+      expect(identity.node_id).toBe("new-agent");
+      expect(identity.node_secret).toBe("new-secret");
       expect(writeFileSync).toHaveBeenCalled();
     });
 
@@ -128,7 +128,7 @@ describe("identity", () => {
         .mockResolvedValueOnce(1);  // c2 inverse
 
       const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.agent_id).toBe("a");
+      expect(identity.node_id).toBe("a");
     });
 
     it("handles challenge timeout (compareForRegistration throws)", async () => {
@@ -149,7 +149,7 @@ describe("identity", () => {
         .mockRejectedValueOnce(new Error("timeout"))
         .mockResolvedValue(1);  // tiebreak succeeds → net becomes non-zero
       const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.agent_id).toBe("a");
+      expect(identity.node_id).toBe("a");
     });
 
     it("retries when registration fails", async () => {
@@ -169,7 +169,7 @@ describe("identity", () => {
 
       vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
       const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.agent_id).toBe("a");
+      expect(identity.node_id).toBe("a");
       expect(client.completeRegistration).toHaveBeenCalledTimes(2);
     });
 
@@ -192,7 +192,7 @@ describe("identity", () => {
 
       vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
       const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.agent_id).toBe("a");
+      expect(identity.node_id).toBe("a");
       expect(sleep).toHaveBeenCalled();
     });
   });

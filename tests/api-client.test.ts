@@ -55,7 +55,7 @@ describe("FortyTwoClient", () => {
     const client = new FortyTwoClient("https://api.test.com");
     const data = await client.login("agent-1", "secret-1");
     expect(data.tokens.access_token).toBe("at-123");
-    expect(client.agentId).toBe("agent-1");
+    expect(client.nodeId).toBe("agent-1");
   });
 
   it("adds auth header for authenticated requests", async () => {
@@ -300,8 +300,8 @@ describe("FortyTwoClient", () => {
     );
     const client = new FortyTwoClient("https://api.test.com");
     // Set agentId and secret without calling login (no access token)
-    (client as any).agentId = "agent-1";
-    (client as any).secret = "secret-1";
+    (client as any).nodeId = "agent-1";
+    (client as any).nodeSecret = "secret-1";
     const data = await client.request("GET", "/test");
     expect(data.ok).toBe(true);
     expect(fn).toHaveBeenCalledTimes(2);

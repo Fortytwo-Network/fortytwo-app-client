@@ -86,13 +86,13 @@ function requireFlag(flags: Record<string, string>, name: string, label: string)
 }
 
 async function cmdSetup(flags: Record<string, string>) {
-  const name = requireFlag(flags, "name", "agent display name");
+  const nodeName = requireFlag(flags, "node-name", "node name");
   const inferenceType = requireFlag(flags, "inference-type", "openrouter | local");
   const model = requireFlag(flags, "model", "model name");
-  const role = requireFlag(flags, "role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
+  const role = requireFlag(flags, "node-role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
 
-  if (!["openrouter", "local"].includes(inferenceType)) {
-    console.error(`Invalid --inference-type: ${inferenceType}. Must be "openrouter" or "local".`);
+  if (!["openrouter", "self-hosted"].includes(inferenceType)) {
+    console.error(`Invalid --inference-type: ${inferenceType}. Must be "openrouter" or "self-hosted".`);
     process.exit(1);
   }
 
@@ -102,10 +102,11 @@ async function cmdSetup(flags: Record<string, string>) {
   }
 
   const values: Record<string, string> = {
-    agent_name: name,
+    node_name: nodeName,
+    node_display_name: nodeName,
     inference_type: inferenceType,
     llm_model: model,
-    bot_role: role,
+    node_role: role,
   };
 
   if (inferenceType === "openrouter") {
@@ -125,23 +126,23 @@ async function cmdSetup(flags: Record<string, string>) {
   }
 
   const cfg = buildConfig(values);
-  const profileName = sanitizeProfileName(name);
+  const profileName = sanitizeProfileName(nodeName);
   createProfile(profileName, cfg);
   reloadConfig();
   console.log(`Config saved to profile "${profileName}".`);
 
   console.log("Starting registration...");
   const client = new FortyTwoClient();
-  await registerAgent(client, name, console.log);
+  await registerAgent(client, nodeName, console.log);
   console.log("Setup complete!");
 }
 
 async function cmdImport(flags: Record<string, string>) {
-  const agentId = requireFlag(flags, "agent-id", "agent UUID");
-  const secret = requireFlag(flags, "secret", "agent secret");
+  const nodeId = requireFlag(flags, "node-id", "agent UUID");
+  const nodeSecret = requireFlag(flags, "node-secret", "node secret");
   const inferenceType = requireFlag(flags, "inference-type", "openrouter | local");
   const model = requireFlag(flags, "model", "model name");
-  const role = requireFlag(flags, "role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
+  const role = requireFlag(flags, "node-role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
 
   if (!["openrouter", "local"].includes(inferenceType)) {
     console.error(`Invalid --inference-type: ${inferenceType}. Must be "openrouter" or "local".`);
@@ -156,30 +157,31 @@ async function cmdImport(flags: Record<string, string>) {
   console.log("Checking credentials...");
   const client = new FortyTwoClient();
   try {
-    await client.login(agentId, secret);
+    await client.login(nodeId, nodeSecret);
   } catch (err) {
     console.error(`Invalid credentials: ${err}`);
     process.exit(1);
   }
 
-  let displayName = agentId;
+  let nodeDisplayName = nodeId;
   try {
     const agent = await client.getAgent();
-    displayName = agent?.profile?.display_name || displayName;
-  } catch { /* keep agentId */ }
+    nodeDisplayName = agent?.profile?.display_name || nodeDisplayName;
+  } catch { /* keep nodeId */ }
 
   const values: Record<string, string> = {
-    agent_name: displayName,
-    agent_id: agentId,
+    node_name: nodeDisplayName,
+    node_display_name: nodeDisplayName,
+    node_id: nodeId,
     inference_type: inferenceType,
     llm_model: model,
-    bot_role: role,
+    node_role: role,
   };
 
   if (inferenceType === "openrouter") {
-    values.openrouter_api_key = requireFlag(flags, "api-key", "OpenRouter API key");
+    values.openrouter_api_key = requireFlag(flags, "openrouter-api-key", "OpenRouter API key");
   } else {
-    values.llm_api_base = requireFlag(flags, "llm-api-base", "local inference URL");
+    values.self_hosted_api_base = requireFlag(flags, "self-hosted-api-base", "local inference URL");
   }
 
   if (!flags["skip-validation"]) {
@@ -193,10 +195,10 @@ async function cmdImport(flags: Record<string, string>) {
   }
 
   const cfg = buildConfig(values);
-  const profileName = sanitizeProfileName(displayName);
-  createProfile(profileName, cfg, { agent_id: agentId, secret });
+  const profileName = sanitizeProfileName(nodeDisplayName);
+  createProfile(profileName, cfg, { node_id: nodeId, node_secret: nodeSecret });
   reloadConfig();
-  console.log(`Agent "${displayName}" (${agentId}) imported to profile "${profileName}"!`);
+  console.log(`Agent "${nodeDisplayName}" (${nodeId}) imported to profile "${profileName}"!`);
 }
 
 async function cmdRun() {
@@ -206,7 +208,7 @@ async function cmdRun() {
   }
 
   const cfg = getConfig();
-  const identity = loadIdentity(cfg.identity_file);
+  const identity = loadIdentity(cfg.node_identity_file);
   if (!identity) {
     console.error("No identity found. Run 'setup' or 'import' first.");
     process.exit(1);
@@ -240,14 +242,14 @@ async function cmdAsk(positionals: string[]) {
   }
 
   const cfg = getConfig();
-  const identity = loadIdentity(cfg.identity_file);
+  const identity = loadIdentity(cfg.node_identity_file);
   if (!identity) {
     console.error("No identity found. Run 'setup' or 'import' first.");
     process.exit(1);
   }
 
   const client = new FortyTwoClient();
-  await client.login(identity.agent_id, identity.secret);
+  await client.login(identity.node_id, identity.node_secret);
 
   const encrypted = Buffer.from(question, "utf-8").toString("base64");
   const res = await client.createQuery(encrypted, "general");
@@ -396,17 +398,18 @@ Usage:
   fortytwo version                  Show version
 
 Setup flags:
-  --name NAME              Node display name
-  --inference-type TYPE    openrouter | local
-  --api-key KEY            OpenRouter API key
-  --llm-api-base URL       Local inference URL
-  --model MODEL            Model name
-  --role ROLE              JUDGE | ANSWERER | ANSWERER_AND_JUDGE
+  --node-name NAME         Node local name
+  --inference-type TYPE    openrouter | self-hosted
+  --openrouter-api-key KEY OpenRouter API key
+  --model-name NAME        Model name
+  --self-hosted-api-base URL Local inference URL
+  --node-name NAME         Local name for the node profile (e.g. "my-judge")
+  --node-role ROLE         JUDGE | ANSWERER | ANSWERER_AND_JUDGE
   --skip-validation        Skip model validation
 
 Import flags:
   --node-id UUID          Node ID
-  --secret SECRET          Node secret
+  --node-secret SECRET     Node secret
   (+ same inference/model/role flags as setup)
 
 Global flags:

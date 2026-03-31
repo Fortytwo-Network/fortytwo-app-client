@@ -31,7 +31,7 @@ interface Stats {
   forBalance: string; intelligenceNormalized: string; judgingNormalized: string;
 }
 interface Config {
-  agentId: string; llmModel: string; inferenceType: string;
+  agentId: string; modelName: string; inferenceType: string;
   provider: string; cycleIntervalMs: number; autoRestart: boolean;
 }
 
@@ -784,7 +784,7 @@ export default function AgenticVision() {
                               <div>
                                 <div className="text-[15px] text-white tracking-[0.15px] mb-1">Node is thinking...</div>
                                 <div className="text-[14px] text-white/40 tracking-[0.14px]">
-                                  Preparing {config?.llmModel || "LLM"} response
+                                  Preparing {config?.modelName || "LLM"} response
                                 </div>
                               </div>
                               <div className="flex flex-col gap-2.5">
@@ -934,7 +934,7 @@ export default function AgenticVision() {
         <div className="flex items-center gap-6 text-[15px] tracking-[0.15px]">
           <span className="text-white">{formatNumber(stats.tokPerSec || streamTps || 0, 1)} tok/s</span>
           <span className="text-white">{config?.provider || "—"}</span>
-          <span className="text-white">{config?.llmModel || "—"}</span>
+          <span className="text-white">{config?.modelName || "—"}</span>
           <span className="text-white/40">{fmtUptime(stats.uptime || 0)}</span>
         </div>
       </div>

@@ -143,23 +143,24 @@ describe("profiles", () => {
 
       const { createProfile } = await import("../src/profiles.js");
       const cfg = {
-        agent_name: "TestBot",
-        display_name: "TestBot",
+        node_name: "TestBot",
+        node_display_name: "TestBot",
         inference_type: "openrouter" as const,
         openrouter_api_key: "key",
         llm_api_base: "",
-        fortytwo_api_base: "https://app.fortytwo.network/api",
-        identity_file: "/old/path/identity.json",
+        fortytwo_api_base: "https://app.fortytwo.network/",
+        self_hosted_api_base: "",
+        node_identity_file: "",
         poll_interval: 120,
-        llm_model: "test",
+        model_name: "test",
         llm_concurrency: 40,
         llm_timeout: 120,
         min_balance: 5.0,
-        bot_role: "JUDGE",
+        node_role: "JUDGE",
         answerer_system_prompt: "You are a helpful assistant.",
       };
 
-      createProfile("testbot", cfg, { agent_id: "agent-1", secret: "sec" });
+      createProfile("testbot", cfg, { node_id: "agent-1", node_secret: "sec" });
 
       expect(mkdirSync).toHaveBeenCalledWith(
         expect.stringContaining("profiles/testbot"),
@@ -171,15 +172,15 @@ describe("profiles", () => {
       );
       expect(configCall).toBeDefined();
       const writtenCfg = JSON.parse(configCall![1] as string);
-      expect(writtenCfg.identity_file).toContain("profiles/testbot/identity.json");
-      expect(writtenCfg.agent_name).toBe("TestBot");
+      expect(writtenCfg.node_identity_file).toContain("profiles/testbot/identity.json");
+      expect(writtenCfg.node_name).toBe("TestBot");
 
       const idCall = vi.mocked(writeFileSync).mock.calls.find(
         (c) => (c[0] as string).endsWith("profiles/testbot/identity.json"),
       );
       expect(idCall).toBeDefined();
       const writtenId = JSON.parse(idCall![1] as string);
-      expect(writtenId.agent_id).toBe("agent-1");
+      expect(writtenId.node_id).toBe("agent-1");
 
       const metaCall = vi.mocked(writeFileSync).mock.calls.find(
         (c) => (c[0] as string).endsWith("profiles.json"),
@@ -197,10 +198,10 @@ describe("profiles", () => {
       vi.mocked(existsSync).mockReturnValue(false);
       const { createProfile } = await import("../src/profiles.js");
       const cfg = {
-        agent_name: "Bot", display_name: "Bot", inference_type: "openrouter" as const,
-        openrouter_api_key: "", llm_api_base: "", fortytwo_api_base: "",
-        identity_file: "", poll_interval: 120, llm_model: "", llm_concurrency: 40,
-        llm_timeout: 120, min_balance: 5, bot_role: "JUDGE", answerer_system_prompt: "",
+        node_name: "Bot", node_display_name: "Bot", inference_type: "openrouter" as const,
+        openrouter_api_key: "", self_hosted_api_base: "", fortytwo_api_base: "",
+        node_identity_file: "", poll_interval: 120, model_name: "", llm_concurrency: 40,
+        llm_timeout: 120, min_balance: 5, node_role: "JUDGE", answerer_system_prompt: "",
       };
       createProfile("bot", cfg);
 
@@ -221,10 +222,10 @@ describe("profiles", () => {
 
       const { createProfile } = await import("../src/profiles.js");
       const cfg = {
-        agent_name: "Bot", display_name: "Bot", inference_type: "openrouter" as const,
-        openrouter_api_key: "", llm_api_base: "", fortytwo_api_base: "",
-        identity_file: "", poll_interval: 120, llm_model: "", llm_concurrency: 40,
-        llm_timeout: 120, min_balance: 5, bot_role: "JUDGE", answerer_system_prompt: "",
+        node_name: "Bot", node_display_name: "Bot", inference_type: "openrouter" as const,
+        openrouter_api_key: "", self_hosted_api_base: "", fortytwo_api_base: "",
+        node_identity_file: "", poll_interval: 120, model_name: "", llm_concurrency: 40,
+        llm_timeout: 120, min_balance: 5, node_role: "JUDGE", answerer_system_prompt: "",
       };
       createProfile("bot", cfg);
 
@@ -339,15 +340,15 @@ describe("profiles", () => {
           return JSON.stringify({ active: "bot-a", profiles: ["bot-a", "bot-b"] });
         }
         if (p.includes("bot-a") && p.endsWith("config.json")) {
-          return JSON.stringify({ agent_name: "BotA" });
+          return JSON.stringify({ node_name: "BotA" });
         }
         if (p.includes("bot-b") && p.endsWith("config.json")) {
-          return JSON.stringify({ agent_name: "BotB" });
+          return JSON.stringify({ node_name: "BotB" });
         }
         return "{}";
       });
       vi.mocked(loadIdentity).mockImplementation((path) => {
-        if (path.includes("bot-a")) return { agent_id: "id-aaa-bbb", secret: "s" };
+        if (path.includes("bot-a")) return { node_id: "id-aaa-bbb", node_secret: "s" };
         return null;
       });
 
@@ -359,13 +360,13 @@ describe("profiles", () => {
         name: "bot-a",
         active: true,
         agentName: "BotA",
-        agentId: "id-aaa-bbb",
+        nodeId: "id-aaa-bbb",
       });
       expect(profiles[1]).toEqual({
         name: "bot-b",
         active: false,
         agentName: "BotB",
-        agentId: "",
+        nodeId: "",
       });
     });
   });
@@ -395,9 +396,9 @@ describe("profiles", () => {
       const legacyCfg = {
         agent_name: "My Judge Bot",
         inference_type: "openrouter",
-        identity_file: "/tmp/.fortytwo/identity.json",
+        node_identity_file: "/tmp/.fortytwo/identity.json",
       };
-      const legacyIdentity = JSON.stringify({ agent_id: "old-id", secret: "old-sec" });
+      const legacyIdentity = JSON.stringify({ agent_id: "old-id", node_secret: "old-sec" });
 
       vi.mocked(existsSync).mockImplementation((path) => {
         const p = path as string;
@@ -426,7 +427,7 @@ describe("profiles", () => {
       );
       expect(cfgCall).toBeDefined();
       const writtenCfg = JSON.parse(cfgCall![1] as string);
-      expect(writtenCfg.identity_file).toContain("profiles/my-judge-bot/identity.json");
+      expect(writtenCfg.node_identity_file).toContain("profiles/my-judge-bot/identity.json");
       expect(writtenCfg.agent_name).toBe("My Judge Bot");
 
       const idCall = vi.mocked(writeFileSync).mock.calls.find(

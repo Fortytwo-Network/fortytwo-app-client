@@ -34,7 +34,7 @@ export interface ViewerTx {
 export interface JudgeDetail {
   challengeId: string;
   questionText: string;
-  answers: { id: string; content: string; agentId?: string }[];
+  answers: { id: string; content: string; nodeId?: string }[];
   comparisons: { a: string; b: string; winner: string }[];
   finalRankings: string[];
   goodAnswers: string[];
@@ -99,8 +99,8 @@ export interface ViewerStats {
 }
 
 export interface ViewerConfig {
-  agentId: string;
-  llmModel: string;
+  nodeId: string;
+  modelName: string;
   inferenceType: string;
   provider: string;
   cycleIntervalMs: number;
@@ -166,8 +166,8 @@ class ViewerEventBus extends EventEmitter {
   private _queries: VisibleQuery[] = [];
   private _lastJudge: JudgeDetail | null = null;
   private _config: ViewerConfig = {
-    agentId: "",
-    llmModel: "",
+    nodeId: "",
+    modelName: "",
     inferenceType: "",
     provider: "",
     cycleIntervalMs: 120_000,

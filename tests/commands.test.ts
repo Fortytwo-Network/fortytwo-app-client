@@ -1,19 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockConfig = {
-  agent_name: "testbot",
-  display_name: "TestBot",
+  node_name: "testbot",
+  node_display_name: "TestBot",
   inference_type: "openrouter" as const,
   openrouter_api_key: "sk-or-v1-abcdef1234567890",
-  llm_api_base: "",
+  self_hosted_api_base: "",
   fortytwo_api_base: "https://app.fortytwo.network/api",
   identity_file: "/tmp/identity.json",
   poll_interval: 120,
-  llm_model: "qwen/qwen3.5-35b-a3b",
+  model_name: "qwen/qwen3.5-35b-a3b",
   llm_concurrency: 40,
   llm_timeout: 120,
   min_balance: 5.0,
-  bot_role: "JUDGE",
+  node_role: "JUDGE",
   answerer_system_prompt: "You are a helpful assistant.",
 };
 
@@ -27,8 +27,8 @@ vi.mock("../src/config.js", () => ({
 
 vi.mock("../src/identity.js", () => ({
   loadIdentity: (path: string) => ({
-    agent_id: "test-agent-id",
-    secret: "test-secret-key",
+    node_id: "test-agent-id",
+    node_secret: "test-secret-key",
   }),
 }));
 
@@ -42,7 +42,7 @@ vi.mock("../src/llm.js", () => ({
 
 vi.mock("../src/profiles.js", () => ({
   listProfiles: vi.fn().mockReturnValue([
-    { name: "default", active: true, agentName: "testbot", agentId: "test-agent-id" },
+    { name: "default", active: true, agentName: "testbot", nodeId: "test-agent-id" },
   ]),
   switchProfile: vi.fn(),
 }));
@@ -73,12 +73,12 @@ describe("executeCommand", () => {
     expect(result[0]).toBe("Commands:");
   });
 
-  it("/identity shows agent_id and secret", () => {
+  it("/identity shows node_id and secret", () => {
     const result = executeCommand("/identity");
     expect(result).toEqual([
       "Identity:",
-      "  agent_id: test-agent-id",
-      "  secret:   test-secret-key",
+      "  node_id: test-agent-id",
+      "  node_secret:   test-secret-key",
     ]);
   });
 
@@ -92,19 +92,19 @@ describe("executeCommand", () => {
   });
 
   it("/config set saves and reloads", () => {
-    const result = executeCommand("/config set llm_model gpt-4");
+    const result = executeCommand("/config set model_name gpt-4");
     expect(savedConfig).not.toBeNull();
-    expect(savedConfig.llm_model).toBe("gpt-4");
-    expect(result[0]).toContain("llm_model");
+    expect(savedConfig.model_name).toBe("gpt-4");
+    expect(result[0]).toContain("model_name");
   });
 
   it("/config set LLM key resets client", () => {
-    executeCommand("/config set llm_model test");
+    executeCommand("/config set model_name test");
     expect(resetLlmClient).toHaveBeenCalled();
   });
 
   it("/config set non-LLM key does not reset client", () => {
-    executeCommand("/config set bot_role ANSWERER");
+    executeCommand("/config set node_role ANSWERER");
     expect(resetLlmClient).not.toHaveBeenCalled();
   });
 
@@ -160,8 +160,8 @@ describe("executeCommand", () => {
     it("/profile list shows profiles", async () => {
       const { listProfiles } = await import("../src/profiles.js");
       vi.mocked(listProfiles).mockReturnValue([
-        { name: "my-judge", active: true, agentName: "MyJudge", agentId: "aaaa-bbbb-cccc" },
-        { name: "answerer", active: false, agentName: "Answerer", agentId: "dddd-eeee-ffff" },
+        { name: "my-judge", active: true, agentName: "MyJudge", nodeId: "aaaa-bbbb-cccc" },
+        { name: "answerer", active: false, agentName: "Answerer", nodeId: "dddd-eeee-ffff" },
       ]);
       const result = executeCommand("/profile list");
       expect(result[0]).toBe("Profiles:");
@@ -174,7 +174,7 @@ describe("executeCommand", () => {
     it("/profile without subcommand shows list", async () => {
       const { listProfiles } = await import("../src/profiles.js");
       vi.mocked(listProfiles).mockReturnValue([
-        { name: "default", active: true, agentName: "Bot", agentId: "id-1" },
+        { name: "default", active: true, agentName: "Bot", nodeId: "id-1" },
       ]);
       const result = executeCommand("/profile");
       expect(result[0]).toBe("Profiles:");
@@ -200,7 +200,7 @@ describe("executeCommand", () => {
     it("/profile switch without name shows usage", async () => {
       const { listProfiles } = await import("../src/profiles.js");
       vi.mocked(listProfiles).mockReturnValue([
-        { name: "default", active: true, agentName: "Bot", agentId: "id-1" },
+        { name: "default", active: true, agentName: "Bot", nodeId: "id-1" },
       ]);
       const result = executeCommand("/profile switch");
       expect(result[0]).toContain("Usage:");

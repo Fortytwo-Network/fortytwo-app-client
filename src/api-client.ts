@@ -3,8 +3,8 @@ import { sleep, verbose } from "./utils.js";
 
 export class FortyTwoClient {
   private baseUrl: string;
-  agentId = "";
-  private secret = "";
+  nodeId = "";
+  private nodeSecret = "";
   private accessToken = "";
   private refreshTokenValue = "";
   private tokenExpiresAt = 0;
@@ -15,11 +15,11 @@ export class FortyTwoClient {
 
   // ── Auth ──────────────────────────────────────────────────────
 
-  async login(agentId: string, secret: string): Promise<Record<string, any>> {
-    this.agentId = agentId;
-    this.secret = secret;
+  async login(nodeId: string, nodeSecret: string): Promise<Record<string, any>> {
+    this.nodeId = nodeId;
+    this.nodeSecret = nodeSecret;
     const data = await this.request("POST", "/auth/login", {
-      body: { agent_id: agentId, secret },
+      body: { agent_id: nodeId, secret: nodeSecret },
       auth: false,
     });
     this.storeTokens(data);
@@ -63,7 +63,7 @@ export class FortyTwoClient {
   // ── Rankings ──────────────────────────────────────────────────
 
   async getPendingChallenges(page = 1, pageSize = 20): Promise<Record<string, any>> {
-    return this.request("GET", `/rankings/pending/${this.agentId}`, {
+    return this.request("GET", `/rankings/pending/${this.nodeId}`, {
       params: { page, page_size: pageSize },
     });
   }
@@ -130,11 +130,12 @@ export class FortyTwoClient {
     });
   }
 
-  async startReactivation(agentId: string, secret: string): Promise<Record<string, any>> {
-    return this.request("POST", "/auth/reactivate/start", {
-      body: { agent_id: agentId, secret },
+  async startReactivation(nodeId: string, nodeSecret: string): Promise<Record<string, any>> {
+    const data = await this.request("POST", "/auth/reactivate/start", {
+      body: { agent_id: nodeId, secret: nodeSecret },
       auth: false,
     });
+    return data;
   }
 
   async completeReactivation(sessionId: string, responses: Record<string, any>[]): Promise<Record<string, any>> {
@@ -147,15 +148,15 @@ export class FortyTwoClient {
   // ── Economy ───────────────────────────────────────────────────
 
   async getBalance(): Promise<Record<string, any>> {
-    return this.request("GET", `/economy/balance/${this.agentId}`);
+    return this.request("GET", `/economy/balance/${this.nodeId}`);
   }
 
   async getAgent(): Promise<Record<string, any>> {
-    return this.request("GET", `/agents/${this.agentId}`);
+    return this.request("GET", `/agents/${this.nodeId}`);
   }
 
   async getAgentStats(): Promise<Record<string, any>> {
-    return this.request("GET", `/agents/${this.agentId}/stats`);
+    return this.request("GET", `/agents/${this.nodeId}/stats`);
   }
 
   async getLikesRemaining(): Promise<Record<string, any>> {
@@ -166,8 +167,8 @@ export class FortyTwoClient {
 
   private async ensureAuthenticated(): Promise<void> {
     if (!this.accessToken) {
-      if (this.agentId && this.secret) {
-        await this.login(this.agentId, this.secret);
+      if (this.nodeId && this.nodeSecret) {
+        await this.login(this.nodeId, this.nodeSecret);
       }
       return;
     }
@@ -175,8 +176,8 @@ export class FortyTwoClient {
       try {
         await this.refresh();
       } catch {
-        if (this.agentId && this.secret) {
-          await this.login(this.agentId, this.secret);
+        if (this.nodeId && this.nodeSecret) {
+          await this.login(this.nodeId, this.nodeSecret);
         }
       }
     }
@@ -237,8 +238,8 @@ export class FortyTwoClient {
       // 401: try refreshing tokens once
       if (resp.status === 401 && auth && attempt === 0) {
         try {
-          if (this.agentId && this.secret) {
-            await this.login(this.agentId, this.secret);
+          if (this.nodeId && this.nodeSecret) {
+            await this.login(this.nodeId, this.nodeSecret);
           }
         } catch { /* ignore */ }
         continue;

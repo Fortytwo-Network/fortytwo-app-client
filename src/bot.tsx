@@ -220,7 +220,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
     (async () => {
       try {
         const cfg = getConfig();
-        const identity = loadIdentity(cfg.identity_file);
+        const identity = loadIdentity(cfg.node_identity_file);
         if (!identity) {
           setError("No identity found. Run onboarding first.");
           return;
@@ -243,16 +243,16 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
         viewerBus.setState("AUTHENTICATING");
         const c = new FortyTwoClient();
-        await c.login(identity.agent_id, identity.secret);
+        await c.login(identity.node_id, identity.node_secret);
         setClient(c);
 
-        const name = cfg.agent_name || cfg.display_name || "Agent";
+        const name = cfg.node_name || cfg.node_display_name || "Agent";
         setAgentName(name);
-        setAgentRole(cfg.bot_role);
-        log(`Logged in as ${name} — ${identity.agent_id}`);
-        log(`Role: ${getRoleLabel(cfg.bot_role)} | Poll: ${cfg.poll_interval}s | Model: ${cfg.llm_model}`);
+        setAgentRole(cfg.node_role);
+        log(`Logged in as ${name} — ${identity.node_id}`);
+        log(`Role: ${getRoleLabel(cfg.node_role)} | Poll: ${cfg.poll_interval}s | Model: ${cfg.model_name}`);
 
-        await initViewerBus(c, cfg, identity.agent_id);
+        await initViewerBus(c, cfg, identity.node_id);
 
         let cycles = 0;
         while (!cancelled) {
@@ -283,8 +283,8 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
             if (errMsg.toLowerCase().includes("inactive") || errMsg.toLowerCase().includes("deactivated")) {
               log(`Account deactivated — reactivating...`);
               viewerBus.updateStats({ accountInactive: true });
-              await reactivateAccount(c, identity.agent_id, identity.secret);
-              await c.login(identity.agent_id, identity.secret);
+              await reactivateAccount(c, identity.node_id, identity.node_secret);
+              await c.login(identity.node_id, identity.node_secret);
               viewerBus.updateStats({ accountInactive: false });
               log("✓ Reactivation complete!");
               continue;
@@ -331,15 +331,15 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const offset = lines.length - visible.length;
   const cfg = getConfig();
 
-  const providerStr = cfg.inference_type === "local"
-    ? `Self-hosted ${cfg.llm_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}`
+  const providerStr = cfg.inference_type === "self-hosted"
+    ? `Self-hosted ${cfg.self_hosted_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}`
     : "OpenRouter";
 
   const displayName = truncateName(agentName.toUpperCase());
   const intScore = profile ? formatNumber(profile.intelligenceScore, 4) : "—";
   const jdgScore = profile ? formatNumber(profile.judgingScore, 3) : "—";
 
-  const roleDisplay = getRoleLabel(agentRole || cfg.bot_role);
+  const roleDisplay = getRoleLabel(agentRole || cfg.node_role);
 
   const qStr = stats ? formatNumber(stats.queries) : "—";
   const finStr = stats ? formatNumber(stats.queriesCompleted) : "—";
@@ -371,7 +371,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         </Box>
         <Box flexDirection="column" marginLeft={2}>
           <Text color={COLORS.BLUE_CONTENT}>{providerStr}</Text>
-          <Text color={COLORS.GREY_LIGHT}>{cfg.llm_model}</Text>
+          <Text color={COLORS.GREY_LIGHT}>{cfg.model_name}</Text>
           <Text><Text color={COLORS.BLUE_CONTENT}>Poll</Text> <Text color={COLORS.GREY_LIGHT}>{cfg.poll_interval}s</Text> <Text color={COLORS.GREY_LIGHT}>·</Text> <Text color={COLORS.BLUE_CONTENT}>Concurrency</Text> <Text color={COLORS.GREY_LIGHT}>{llmActive}/{cfg.llm_concurrency}</Text></Text>
           <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`Q ${qStr}`, 14)}{padRight(`fin ${finStr}`, 14)}</Text></Text>
           <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`A ${aStr}`, 14)}{padRight(`won ${aWonStr}`, 14)}{`rate ${aRateStr}`}</Text></Text>

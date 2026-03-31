@@ -16,14 +16,14 @@ import { getRoleLabel } from "./utils.js";
 
 type StepId =
   | "setup_mode"
-  | "agent_name"
-  | "agent_id"
-  | "agent_secret"
+  | "node_name"
+  | "node_id"
+  | "node_secret"
   | "inference_type"
   | "openrouter_api_key"
-  | "llm_api_base"
-  | "llm_model"
-  | "bot_role";
+  | "self_hosted_api_base"
+  | "model_name"
+  | "node_role";
 
 interface StepDef {
   id: StepId;
@@ -55,7 +55,7 @@ const SETUP_MODE_OPTIONS = [
 
 const INFERENCE_OPTIONS = [
   { label: "OpenRouter", value: "openrouter" },
-  { label: "Local inference", value: "local" },
+  { label: "Self-hosted inference", value: "self-hosted" },
 ];
 
 function buildSteps(inferenceType?: InferenceType, setupMode?: string): StepDef[] {
@@ -65,37 +65,37 @@ function buildSteps(inferenceType?: InferenceType, setupMode?: string): StepDef[
 
   if (setupMode === "import") {
     steps.push(
-      { id: "agent_id", label: "Node ID", type: "text", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
-      { id: "agent_secret", label: "Node Secret", type: "text", placeholder: "your-secret", mask: true },
+      { id: "node_id", label: "Node ID", type: "text", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+      { id: "node_secret", label: "Node Secret", type: "text", placeholder: "your-secret", mask: true },
     );
   } else {
-    steps.push({ id: "agent_name", label: "Node Name", type: "text", placeholder: "JudgeNode" });
+    steps.push({ id: "node_name", label: "Node Name", type: "text", placeholder: "JudgeNode" });
   }
 
   steps.push({ id: "inference_type", label: "Inference Provider", type: "select", options: INFERENCE_OPTIONS });
 
-  if (inferenceType === "local") {
+  if (inferenceType === "self-hosted") {
     steps.push(
-      { id: "llm_api_base", label: "Local API Base URL", type: "text", placeholder: "http://localhost:11434/v1" },
-      { id: "llm_model", label: "Model Name", type: "text", placeholder: "llama3" },
+      { id: "self_hosted_api_base", label: "Local API Base URL", type: "text", placeholder: "http://localhost:11434/v1" },
+      { id: "model_name", label: "Model Name", type: "text", placeholder: "llama3" },
     );
   } else if (inferenceType === "openrouter") {
     steps.push(
       { id: "openrouter_api_key", label: "OpenRouter API Key", type: "text", placeholder: "sk-or-...", mask: true },
-      { id: "llm_model", label: "Model Name", type: "text", placeholder: "qwen/qwen3.5-35b-a3b" },
+      { id: "model_name", label: "Model Name", type: "text", placeholder: "qwen/qwen3.5-35b-a3b" },
     );
   }
 
-  steps.push({ id: "bot_role", label: "Bot Role", type: "select", options: ROLE_OPTIONS });
+  steps.push({ id: "node_role", label: "Node Role", type: "select", options: ROLE_OPTIONS });
 
   return steps;
 }
 
 function displayValue(key: string, value: string): string {
-  if (key === "openrouter_api_key" || key === "agent_secret") return "***";
+  if (key === "openrouter_api_key" || key === "node_secret") return "***";
   if (key === "setup_mode") return value === "import" ? "Import existing" : "Register new";
-  if (key === "inference_type") return value === "local" ? "Local inference" : "OpenRouter";
-  if (key === "bot_role") return getRoleLabel(value, "onboard");
+  if (key === "inference_type") return value === "self-hosted" ? "Self-hosted inference" : "OpenRouter";
+  if (key === "node_role") return getRoleLabel(value, "onboard");
   return value;
 }
 
@@ -131,7 +131,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
     if (!canGoBack) return;
     const prevStep = steps[stepIdx - 1];
     setValidationError(null);
-    setModelFilter(prevStep.id === "llm_model" ? (values["llm_model"] ?? "") : "");
+    setModelFilter(prevStep.id === "model_name" ? (values["model_name"] ?? "") : "");
     setBackFocused(false);
     setStepIdx(stepIdx - 1);
   }
@@ -157,10 +157,10 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
 
   // Autocomplete: filtered models for current query
   const modelQuery = modelFilter.toLowerCase();
-  const filteredModels = step?.id === "llm_model" && modelQuery && availableModels.length > 0
-    ? availableModels.filter((m) => m.toLowerCase().includes(modelQuery))
+  const filteredModels = step?.id === "model_name" && modelQuery && availableModels.length > 0
+    ? availableModels.filter(m => m.toLowerCase().includes(modelQuery.toLowerCase()))
     : [];
-  const isModelAutocomplete = phase === "input" && step?.id === "llm_model" && availableModels.length > 0;
+  const isModelAutocomplete = phase === "input" && step?.id === "model_name" && availableModels.length > 0;
 
   // Credentials validation (import flow)
   useEffect(() => {
@@ -170,29 +170,29 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
     (async () => {
       try {
         const client = new FortyTwoClient();
-        await client.login(values.agent_id, values.agent_secret);
+        await client.login(values.node_id, values.node_secret);
 
         // Fetch display name
-        let displayName = values.agent_id;
+        let displayName = values.node_id;
         try {
           const agent = await client.getAgent();
           displayName = agent?.profile?.display_name || displayName;
-        } catch { /* keep agent_id as name */ }
+        } catch { /* keep node_id as name */ }
 
         if (cancelled) return;
-        setValues((prev) => ({ ...prev, _display_name: displayName }));
+        setValues((prev) => ({ ...prev, _node_display_name: displayName }));
         setValidationError(null);
         setPhase("input");
         setStepIdx(stepIdx + 1);
       } catch (err) {
         if (cancelled) return;
-        // Return to agent_id step so user can fix either field
-        const agentIdIdx = steps.findIndex((s) => s.id === "agent_id");
+        // Return to node_id step so user can fix either field
+        const nodeIdIdx = steps.findIndex((s) => s.id === "node_id");
         setValues((prev) => {
-          const { agent_id: _, agent_secret: __, ...rest } = prev;
+          const { node_id: _, node_secret: __, ...rest } = prev;
           return rest;
         });
-        setStepIdx(agentIdIdx >= 0 ? agentIdIdx : stepIdx);
+        setStepIdx(nodeIdIdx >= 0 ? nodeIdIdx : stepIdx);
         const msg = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as Record<string, unknown>).message) : String(err);
         setValidationError(`✕ Invalid credentials: ${msg}`);
         setPhase("input");
@@ -207,8 +207,8 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
     if (phase !== "fetching_models") return;
 
     let cancelled = false;
-    const isLocal = values.inference_type === "local";
-    const baseUrl = isLocal ? values.llm_api_base : "https://openrouter.ai/api/v1";
+    const isLocal = values.inference_type === "self-hosted";
+    const baseUrl = isLocal ? values.self_hosted_api_base : "https://openrouter.ai/api/v1";
     const apiKey = isLocal ? "EMPTY" : values.openrouter_api_key;
 
     fetchModels(baseUrl, apiKey).then((result) => {
@@ -220,7 +220,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
       }
       setAvailableModels(result.models);
       setValidationError(null);
-      setModelFilter(values["llm_model"] ?? "");
+      setModelFilter(values["model_name"] ?? "");
       setPhase("input");
       setStepIdx(stepIdx + 1);
     });
@@ -259,7 +259,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
         if (!skipToRegistration) {
           setRegLog(["↳ Saving config..."]);
           const cfg = buildConfig(values);
-          const profileName = sanitizeProfileName(values.agent_name || "default");
+          const profileName = sanitizeProfileName(values.node_name || "default");
           createProfile(profileName, cfg);
           reloadConfig();
         }
@@ -267,14 +267,15 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
         const cfg = getConfig();
 
         // Show inference info
-        const isLocal = cfg.inference_type === "local";
-        setRegLog((prev) => [
-          ...prev,
-          `Inference: ${isLocal ? "self-hosted" : "openrouter"}`,
-          ...(isLocal ? [`Host: ${cfg.llm_api_base}`] : []),
-          `Model: ${cfg.llm_model}`,
+        const isLocal = cfg.inference_type === "self-hosted";
+        const finalLines = [
+          `Role: ${cfg.node_role}`,
+          `Inference: ${cfg.inference_type}`,
+          ...(isLocal ? [`Host: ${cfg.self_hosted_api_base}`] : []),
+          `Model: ${cfg.model_name}`,
           "",
-        ]);
+        ];
+        setRegLog((prev) => [...prev, ...finalLines]);
 
         // Validate config fields
         const cfgCheck = validateConfig(cfg as unknown as Record<string, string>);
@@ -292,7 +293,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
         }
 
         const client = new FortyTwoClient();
-        const displayName = cfg.display_name || values.agent_name || "JudgeNode";
+        const displayName = cfg.node_display_name || values.node_name || "JudgeNode";
         await registerAgent(client, displayName, (msg) => {
           if (cancelled) return;
           if (msg.startsWith("~")) {
@@ -330,15 +331,15 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
       try {
         setRegLog(["↳ Saving config..."]);
         const cfg = buildConfig(values);
-        const profileName = sanitizeProfileName(values._display_name || values.agent_id || "default");
+        const profileName = sanitizeProfileName(values._node_display_name || values.node_id || "default");
         createProfile(profileName, cfg, {
-          agent_id: values.agent_id,
-          secret: values.agent_secret,
+          node_id: values.node_id,
+          node_secret: values.node_secret,
         });
         reloadConfig();
 
-        const name = values._display_name || values.agent_id;
-        setRegLog((prev) => [...prev, `✓ Node "${name}" (${values.agent_id}) imported!`]);
+        const name = values._node_display_name || values.node_id;
+        setRegLog((prev) => [...prev, `✓ Node "${name}" (${values.node_id}) imported!`]);
         onDone();
       } catch (err) {
         if (cancelled) return;
@@ -363,17 +364,17 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
 
     // Branch change: clear dependent values when branching select changes
     if (step!.id === "setup_mode" && previousValue !== undefined && previousValue !== value) {
-      delete next["agent_name"];
-      delete next["agent_id"];
-      delete next["agent_secret"];
-      delete next["_display_name"];
+      delete next["node_name"];
+      delete next["node_id"];
+      delete next["node_secret"];
+      delete next["_node_display_name"];
     }
 
     if (step!.id === "inference_type" && previousValue !== undefined && previousValue !== value) {
       delete next["openrouter_api_key"];
-      delete next["llm_api_base"];
-      delete next["llm_model"];
-      delete next["bot_role"];
+      delete next["self_hosted_api_base"];
+      delete next["model_name"];
+      delete next["node_role"];
       setAvailableModels([]);
     }
 
@@ -387,19 +388,19 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
       setInferenceType(value as InferenceType);
     }
 
-    if (step!.id === "agent_secret") {
+    if (step!.id === "node_secret") {
       setValidationError(null);
       setPhase("validating_creds");
       return;
     }
 
-    if (step!.id === "llm_api_base" || step!.id === "openrouter_api_key") {
+    if (step!.id === "self_hosted_api_base" || step!.id === "openrouter_api_key") {
       setValidationError(null);
       setPhase("fetching_models");
       return;
     }
 
-    if (step!.id === "llm_model") {
+    if (step!.id === "model_name") {
       setValidationError(null);
       setPhase("validating");
       return;
@@ -495,7 +496,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
             <Box>
               <Text color={COLORS.BLUE_FRAME} bold>{backFocused ? "  " : "❯ "}</Text>
               <TextInput
-                key="llm_model_autocomplete"
+                key="model_name_autocomplete"
                 isDisabled={backFocused}
                 defaultValue={values[step!.id] ?? ""}
                 placeholder={step!.placeholder ?? ""}

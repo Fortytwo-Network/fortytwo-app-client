@@ -16,7 +16,7 @@ export interface ProfileInfo {
   name: string;
   active: boolean;
   agentName: string;
-  agentId: string;
+  nodeId: string;
 }
 
 let _profileOverride: string | undefined;
@@ -85,19 +85,19 @@ export function listProfiles(): ProfileInfo[] {
   return meta.profiles.map((name) => {
     const dir = getProfileDir(name);
     let agentName = name;
-    let agentId = "";
+    let nodeId = "";
 
     try {
       const cfg = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8"));
-      agentName = cfg.agent_name || cfg.display_name || name;
+      agentName = cfg.node_name || cfg.node_display_name || name;
     } catch {}
 
     try {
       const id = loadIdentity(join(dir, "identity.json"));
-      if (id) agentId = id.agent_id;
+      if (id) nodeId = id.node_id;
     } catch {}
 
-    return { name, active: name === activeName, agentName, agentId };
+    return { name, active: name === activeName, agentName, nodeId };
   });
 }
 
@@ -105,7 +105,7 @@ export function createProfile(name: string, cfg: UserConfig, identity?: Identity
   const dir = getProfileDir(name);
   mkdirSync(dir, { recursive: true });
 
-  const profileCfg = { ...cfg, identity_file: join(dir, "identity.json") };
+  const profileCfg = { ...cfg, node_identity_file: join(dir, "identity.json") };
   writeFileSync(join(dir, "config.json"), JSON.stringify(profileCfg, null, 2));
 
   if (identity) {
@@ -172,15 +172,15 @@ export function migrateIfNeeded(): void {
     return;
   }
 
-  const agentName = (cfg.agent_name as string) || (cfg.display_name as string) || "";
+  const agentName = (cfg.node_name as string) || (cfg.agent_name as string) || (cfg.node_display_name as string) || "";
   const profileName = sanitizeProfileName(agentName) || "default";
   const dir = join(PROFILES_DIR, profileName);
   mkdirSync(dir, { recursive: true });
 
-  const profileCfg = { ...cfg, identity_file: join(dir, "identity.json") };
+  const profileCfg = { ...cfg, node_identity_file: join(dir, "identity.json") };
   writeFileSync(join(dir, "config.json"), JSON.stringify(profileCfg, null, 2));
 
-  const legacyIdentityPath = (cfg.identity_file as string) || LEGACY_IDENTITY;
+  const legacyIdentityPath = (cfg.node_identity_file as string) || LEGACY_IDENTITY;
   if (existsSync(legacyIdentityPath)) {
     try {
       const identityData = readFileSync(legacyIdentityPath, "utf-8");

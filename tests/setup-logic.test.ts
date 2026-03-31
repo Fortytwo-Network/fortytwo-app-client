@@ -29,7 +29,7 @@ describe("setup-logic", () => {
       const result = await validateModel({
         inference_type: "openrouter",
         openrouter_api_key: "key",
-        llm_model: "test-model",
+        model_name: "test-model",
       });
       expect(result.ok).toBe(true);
     });
@@ -42,7 +42,7 @@ describe("setup-logic", () => {
       const result = await validateModel({
         inference_type: "openrouter",
         openrouter_api_key: "key",
-        llm_model: "missing-model",
+        model_name: "missing-model",
       });
       expect(result.ok).toBe(false);
       expect(result.error).toContain("not found");
@@ -54,9 +54,9 @@ describe("setup-logic", () => {
         json: async () => ({ data: [] }),
       });
       const result = await validateModel({
-        inference_type: "local",
-        llm_api_base: "http://localhost:11434/v1",
-        llm_model: "llama3",
+        inference_type: "self-hosted",
+        self_hosted_api_base: "http://localhost:11434/v1",
+        model_name: "llama3",
       });
       expect(result.ok).toBe(true);
     });
@@ -64,9 +64,9 @@ describe("setup-logic", () => {
     it("returns error on network failure", async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
       const result = await validateModel({
-        inference_type: "local",
-        llm_api_base: "http://localhost:11434/v1",
-        llm_model: "llama3",
+        inference_type: "self-hosted",
+        self_hosted_api_base: "http://localhost:11434/v1",
+        model_name: "llama3",
       });
       expect(result.ok).toBe(false);
       expect(result.error).toContain("Cannot reach");
@@ -80,7 +80,7 @@ describe("setup-logic", () => {
       const result = await validateModel({
         inference_type: "openrouter",
         openrouter_api_key: "bad-key",
-        llm_model: "test",
+        model_name: "test",
       });
       expect(result.ok).toBe(false);
       expect(result.error).toContain("Invalid API key");
@@ -92,9 +92,9 @@ describe("setup-logic", () => {
         status: 401,
       });
       const result = await validateModel({
-        inference_type: "local",
-        llm_api_base: "http://localhost:11434/v1",
-        llm_model: "test",
+        inference_type: "self-hosted",
+        self_hosted_api_base: "http://localhost:11434/v1",
+        model_name: "test",
       });
       expect(result.ok).toBe(false);
       expect(result.error).toContain("Auth rejected");
@@ -108,7 +108,7 @@ describe("setup-logic", () => {
       const result = await validateModel({
         inference_type: "openrouter",
         openrouter_api_key: "key",
-        llm_model: "test",
+        model_name: "test",
       });
       expect(result.ok).toBe(false);
       expect(result.error).toContain("API returned 500");
@@ -122,7 +122,7 @@ describe("setup-logic", () => {
       const result = await validateModel({
         inference_type: "openrouter",
         openrouter_api_key: "key",
-        llm_model: "test",
+        model_name: "test",
       });
       expect(result.ok).toBe(true);
     });
@@ -134,9 +134,9 @@ describe("setup-logic", () => {
       });
       globalThis.fetch = fetchMock;
       await validateModel({
-        inference_type: "local",
-        llm_api_base: "http://localhost:11434/v1/",
-        llm_model: "llama3",
+        inference_type: "self-hosted",
+        self_hosted_api_base: "http://localhost:11434/v1/",
+        model_name: "llama3",
       });
       expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:11434/v1/models");
     });
@@ -153,7 +153,7 @@ describe("setup-logic", () => {
       const result = await validateModel({
         inference_type: "openrouter",
         openrouter_api_key: "key",
-        llm_model: "missing",
+        model_name: "missing",
       });
       expect(result.ok).toBe(false);
       expect(result.error).toContain("Model \"missing\" not found. Choose correct one and restart the client.");
@@ -163,60 +163,60 @@ describe("setup-logic", () => {
   describe("buildConfig", () => {
     it("builds openrouter config", () => {
       const cfg = buildConfig({
-        agent_name: "Bot",
+        node_name: "Bot",
         inference_type: "openrouter",
         openrouter_api_key: "sk-or-xxx",
-        llm_model: "test-model",
-        bot_role: "JUDGE",
+        model_name: "test-model",
+        node_role: "JUDGE",
       });
-      expect(cfg.agent_name).toBe("Bot");
+      expect(cfg.node_name).toBe("Bot");
       expect(cfg.inference_type).toBe("openrouter");
       expect(cfg.openrouter_api_key).toBe("sk-or-xxx");
-      expect(cfg.llm_model).toBe("test-model");
-      expect(cfg.bot_role).toBe("JUDGE");
+      expect(cfg.model_name).toBe("test-model");
+      expect(cfg.node_role).toBe("JUDGE");
       expect(cfg.poll_interval).toBe(120);
-      expect(cfg.identity_file).toContain("identity.json");
+      expect(cfg.node_identity_file).toContain("identity.json");
     });
 
     it("builds local config", () => {
       const cfg = buildConfig({
-        agent_name: "LocalBot",
-        inference_type: "local",
-        llm_api_base: "http://localhost:11434/v1",
-        llm_model: "llama3",
-        bot_role: "ANSWERER",
+        node_name: "LocalBot",
+        inference_type: "self-hosted",
+        self_hosted_api_base: "http://localhost:11434/v1",
+        model_name: "llama3",
+        node_role: "ANSWERER",
       });
-      expect(cfg.inference_type).toBe("local");
-      expect(cfg.llm_api_base).toBe("http://localhost:11434/v1");
+      expect(cfg.inference_type).toBe("self-hosted");
+      expect(cfg.self_hosted_api_base).toBe("http://localhost:11434/v1");
     });
 
-    it("uses _display_name as fallback for agent_name", () => {
+    it("uses node_display_name as fallback for node_name", () => {
       const cfg = buildConfig({
-        _display_name: "ServerName",
+        node_display_name: "ServerName",
         inference_type: "openrouter",
-        llm_model: "m",
+        model_name: "m",
       });
-      expect(cfg.agent_name).toBe("ServerName");
-      expect(cfg.display_name).toBe("ServerName");
+      expect(cfg.node_name).toBe("ServerName");
+      expect(cfg.node_display_name).toBe("ServerName");
     });
 
-    it("uses agent_id as fallback when no name", () => {
+    it("uses node_id as fallback when no name", () => {
       const cfg = buildConfig({
-        agent_id: "uuid-123",
+        node_id: "uuid-123",
         inference_type: "openrouter",
-        llm_model: "m",
+        model_name: "m",
       });
-      expect(cfg.agent_name).toBe("uuid-123");
+      expect(cfg.node_name).toBe("uuid-123");
     });
 
-    it("defaults bot_role to JUDGE", () => {
-      const cfg = buildConfig({ inference_type: "openrouter", llm_model: "m" });
-      expect(cfg.bot_role).toBe("JUDGE");
+    it("defaults node_role to JUDGE", () => {
+      const cfg = buildConfig({ inference_type: "openrouter", model_name: "m" });
+      expect(cfg.node_role).toBe("JUDGE");
     });
 
-    it("defaults llm_model for openrouter", () => {
+    it("defaults model_name for openrouter", () => {
       const cfg = buildConfig({ inference_type: "openrouter" });
-      expect(cfg.llm_model).toBe("qwen/qwen3.5-35b-a3b");
+      expect(cfg.model_name).toBe("qwen/qwen3.5-35b-a3b");
     });
   });
 });

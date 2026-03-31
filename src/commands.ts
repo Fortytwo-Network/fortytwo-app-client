@@ -8,8 +8,8 @@ import { getCachedUpdate, UPDATE_COMMAND } from "./update-check.js";
 import pkg from "../package.json" with { type: "json" };
 
 const LLM_RESET_KEYS = new Set([
-  "llm_model", "openrouter_api_key", "inference_type",
-  "llm_api_base", "llm_timeout", "llm_concurrency",
+  "model_name", "openrouter_api_key", "inference_type",
+  "self_hosted_api_base", "llm_timeout", "llm_concurrency",
 ]);
 
 const MASKED_KEYS = new Set(["openrouter_api_key"]);
@@ -26,10 +26,10 @@ function mask(key: string, value: string): string {
 }
 
 const CONFIG_KEYS = [
-  "agent_name", "display_name", "inference_type", "openrouter_api_key",
-  "llm_api_base", "fortytwo_api_base", "identity_file", "poll_interval",
-  "llm_model", "llm_concurrency", "llm_timeout", "min_balance",
-  "bot_role", "answerer_system_prompt",
+  "node_name", "node_display_name", "inference_type", "openrouter_api_key",
+  "self_hosted_api_base", "fortytwo_api_base", "node_identity_file", "poll_interval",
+  "model_name", "llm_concurrency", "llm_timeout", "min_balance",
+  "node_role", "answerer_system_prompt",
 ];
 
 export const SUGGESTIONS = [
@@ -62,7 +62,7 @@ export function executeCommand(input: string): string[] {
     return [
       "Commands:",
       "  /ask <question>        — submit a question to the network",
-      "  /identity              — show agent_id and secret",
+      "  /identity              — show node_id and node_secret",
       "  /profile list          — list all profiles",
       "  /profile create        — create a new profile",
       "  /profile switch <name> — switch active profile",
@@ -80,12 +80,12 @@ export function executeCommand(input: string): string[] {
 
   if (cmd === "identity") {
     const cfg = getConfig();
-    const id = loadIdentity(cfg.identity_file);
+    const id = loadIdentity(cfg.node_identity_file);
     if (!id) return ["No identity found."];
     return [
       "Identity:",
-      `  agent_id: ${id.agent_id}`,
-      `  secret:   ${id.secret}`,
+      `  node_id: ${id.node_id}`,
+      `  node_secret:   ${id.node_secret}`,
     ];
   }
 
