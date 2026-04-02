@@ -26,12 +26,13 @@ export function setProfileOverride(name: string | undefined): void {
 }
 
 export function sanitizeProfileName(name: string): string {
-  return name
+  return (name
     .toLowerCase()
     .replace(/\s+/g, "-")
     .replace(/[^a-z0-9_-]/g, "")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
+    .slice(0, 60))
     || "default";
 }
 
@@ -185,7 +186,9 @@ export function migrateIfNeeded(): void {
     try {
       const identityData = readFileSync(legacyIdentityPath, "utf-8");
       writeFileSync(join(dir, "identity.json"), identityData);
-    } catch {}
+    } catch (err) {
+      console.warn(`Warning: could not migrate identity from ${legacyIdentityPath}: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   saveProfilesMeta({ active: profileName, profiles: [profileName] });

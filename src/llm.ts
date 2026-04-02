@@ -78,7 +78,7 @@ export function getLlmConcurrency(): { active: number; max: number } {
 
 export function resetLlmClient(): void {
   openaiClient = null;
-  semaphore = new Semaphore(config.get().llm_concurrency);
+  semaphore = null;
 }
 
 type LlmPurpose = "ranking" | "generation" | "registration" | "other";

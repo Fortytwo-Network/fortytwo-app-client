@@ -105,14 +105,14 @@ async function cmdSetup(flags: Record<string, string>) {
     node_name: nodeName,
     node_display_name: nodeName,
     inference_type: inferenceType,
-    llm_model: model,
+    model_name: model,
     node_role: role,
   };
 
   if (inferenceType === "openrouter") {
     values.openrouter_api_key = requireFlag(flags, "api-key", "OpenRouter API key");
   } else {
-    values.llm_api_base = requireFlag(flags, "llm-api-base", "local inference URL");
+    values.self_hosted_api_base = requireFlag(flags, "llm-api-base", "local inference URL");
   }
 
   if (!flags["skip-validation"]) {
@@ -140,12 +140,13 @@ async function cmdSetup(flags: Record<string, string>) {
 async function cmdImport(flags: Record<string, string>) {
   const nodeId = requireFlag(flags, "node-id", "agent UUID");
   const nodeSecret = requireFlag(flags, "node-secret", "node secret");
-  const inferenceType = requireFlag(flags, "inference-type", "openrouter | local");
+  const rawInferenceType = requireFlag(flags, "inference-type", "openrouter | self-hosted");
+  const inferenceType = rawInferenceType === "local" ? "self-hosted" : rawInferenceType;
   const model = requireFlag(flags, "model", "model name");
   const role = requireFlag(flags, "node-role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
 
-  if (!["openrouter", "local"].includes(inferenceType)) {
-    console.error(`Invalid --inference-type: ${inferenceType}. Must be "openrouter" or "local".`);
+  if (!["openrouter", "self-hosted"].includes(inferenceType)) {
+    console.error(`Invalid --inference-type: ${rawInferenceType}. Must be "openrouter" or "self-hosted".`);
     process.exit(1);
   }
 
@@ -174,7 +175,7 @@ async function cmdImport(flags: Record<string, string>) {
     node_display_name: nodeDisplayName,
     node_id: nodeId,
     inference_type: inferenceType,
-    llm_model: model,
+    model_name: model,
     node_role: role,
   };
 
