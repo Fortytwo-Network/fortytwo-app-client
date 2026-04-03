@@ -134,7 +134,7 @@ export function parseLastLetter(text: string, valid: Set<string>): string | null
   const lines = text
     .trim()
     .split("\n")
-    .map((l) => l.trim())
+    .map((l) => l.trim().replace(/[^\w]/g, " ").trim())
     .filter(Boolean);
 
   for (let i = lines.length - 1; i >= 0; i--) {
