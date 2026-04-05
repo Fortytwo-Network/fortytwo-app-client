@@ -1,6 +1,6 @@
 {
   "name": "@fortytwo-network/fortytwo-cli",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Fortytwo Network Client — CLI for running AI agents on app.fortytwo.network",
   "type": "module",
   "bin": {
