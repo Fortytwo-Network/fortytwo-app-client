@@ -1,16 +1,30 @@
 #!/usr/bin/env node
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { setVerbose, log } from "./utils.js";
 import {
   configExists,
   get as getConfig,
-  saveConfig,
   reloadConfig,
 } from "./config.js";
-import { loadIdentity, saveIdentity, registerAgent } from "./identity.js";
+import { loadIdentity, registerAgent } from "./identity.js";
 import { FortyTwoClient } from "./api-client.js";
 import { main } from "./main.js";
 import { executeCommand } from "./commands.js";
 import { validateModel, buildConfig } from "./setup-logic.js";
+import { startViewerServer } from "./viewer-server.js";
+import { checkForUpdate, UPDATE_COMMAND } from "./update-check.js";
+import pkg from "../package.json" with { type: "json" };
+import {
+  initProfiles,
+  setProfileOverride,
+  listProfiles,
+  switchProfile,
+  deleteProfile,
+  createProfile,
+  sanitizeProfileName,
+  getProfileDir,
+} from "./profiles.js";
 
 // ── Arg parser ──────────────────────────────────────────────────
 
@@ -46,6 +60,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       }
     } else if (arg === "-v") {
       flags["verbose"] = "true";
+    } else if (arg === "-p") {
+      const next = rest[i + 1];
+      if (next && !next.startsWith("-")) {
+        flags["profile"] = next;
+        i++;
+      }
     } else {
       positionals.push(arg);
     }
@@ -66,13 +86,13 @@ function requireFlag(flags: Record<string, string>, name: string, label: string)
 }
 
 async function cmdSetup(flags: Record<string, string>) {
-  const name = requireFlag(flags, "name", "agent display name");
+  const nodeName = requireFlag(flags, "node-name", "node name");
   const inferenceType = requireFlag(flags, "inference-type", "openrouter | local");
   const model = requireFlag(flags, "model", "model name");
-  const role = requireFlag(flags, "role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
+  const role = requireFlag(flags, "node-role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
 
-  if (!["openrouter", "local"].includes(inferenceType)) {
-    console.error(`Invalid --inference-type: ${inferenceType}. Must be "openrouter" or "local".`);
+  if (!["openrouter", "self-hosted"].includes(inferenceType)) {
+    console.error(`Invalid --inference-type: ${inferenceType}. Must be "openrouter" or "self-hosted".`);
     process.exit(1);
   }
 
@@ -82,16 +102,17 @@ async function cmdSetup(flags: Record<string, string>) {
   }
 
   const values: Record<string, string> = {
-    agent_name: name,
+    node_name: nodeName,
+    node_display_name: nodeName,
     inference_type: inferenceType,
-    llm_model: model,
-    bot_role: role,
+    model_name: model,
+    node_role: role,
   };
 
   if (inferenceType === "openrouter") {
     values.openrouter_api_key = requireFlag(flags, "api-key", "OpenRouter API key");
   } else {
-    values.llm_api_base = requireFlag(flags, "llm-api-base", "local inference URL");
+    values.self_hosted_api_base = requireFlag(flags, "llm-api-base", "local inference URL");
   }
 
   if (!flags["skip-validation"]) {
@@ -105,25 +126,27 @@ async function cmdSetup(flags: Record<string, string>) {
   }
 
   const cfg = buildConfig(values);
-  saveConfig(cfg);
+  const profileName = sanitizeProfileName(nodeName);
+  createProfile(profileName, cfg);
   reloadConfig();
-  console.log("Config saved.");
+  console.log(`Config saved to profile "${profileName}".`);
 
   console.log("Starting registration...");
   const client = new FortyTwoClient();
-  await registerAgent(client, name, console.log);
+  await registerAgent(client, nodeName, console.log);
   console.log("Setup complete!");
 }
 
 async function cmdImport(flags: Record<string, string>) {
-  const agentId = requireFlag(flags, "agent-id", "agent UUID");
-  const secret = requireFlag(flags, "secret", "agent secret");
-  const inferenceType = requireFlag(flags, "inference-type", "openrouter | local");
+  const nodeId = requireFlag(flags, "node-id", "agent UUID");
+  const nodeSecret = requireFlag(flags, "node-secret", "node secret");
+  const rawInferenceType = requireFlag(flags, "inference-type", "openrouter | self-hosted");
+  const inferenceType = rawInferenceType === "local" ? "self-hosted" : rawInferenceType;
   const model = requireFlag(flags, "model", "model name");
-  const role = requireFlag(flags, "role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
+  const role = requireFlag(flags, "node-role", "JUDGE | ANSWERER | ANSWERER_AND_JUDGE");
 
-  if (!["openrouter", "local"].includes(inferenceType)) {
-    console.error(`Invalid --inference-type: ${inferenceType}. Must be "openrouter" or "local".`);
+  if (!["openrouter", "self-hosted"].includes(inferenceType)) {
+    console.error(`Invalid --inference-type: ${rawInferenceType}. Must be "openrouter" or "self-hosted".`);
     process.exit(1);
   }
 
@@ -135,30 +158,31 @@ async function cmdImport(flags: Record<string, string>) {
   console.log("Checking credentials...");
   const client = new FortyTwoClient();
   try {
-    await client.login(agentId, secret);
+    await client.login(nodeId, nodeSecret);
   } catch (err) {
     console.error(`Invalid credentials: ${err}`);
     process.exit(1);
   }
 
-  let displayName = agentId;
+  let nodeDisplayName = nodeId;
   try {
     const agent = await client.getAgent();
-    displayName = agent?.profile?.display_name || displayName;
-  } catch { /* keep agentId */ }
+    nodeDisplayName = agent?.profile?.display_name || nodeDisplayName;
+  } catch { /* keep nodeId */ }
 
   const values: Record<string, string> = {
-    agent_name: displayName,
-    agent_id: agentId,
+    node_name: nodeDisplayName,
+    node_display_name: nodeDisplayName,
+    node_id: nodeId,
     inference_type: inferenceType,
-    llm_model: model,
-    bot_role: role,
+    model_name: model,
+    node_role: role,
   };
 
   if (inferenceType === "openrouter") {
-    values.openrouter_api_key = requireFlag(flags, "api-key", "OpenRouter API key");
+    values.openrouter_api_key = requireFlag(flags, "openrouter-api-key", "OpenRouter API key");
   } else {
-    values.llm_api_base = requireFlag(flags, "llm-api-base", "local inference URL");
+    values.self_hosted_api_base = requireFlag(flags, "self-hosted-api-base", "local inference URL");
   }
 
   if (!flags["skip-validation"]) {
@@ -172,11 +196,10 @@ async function cmdImport(flags: Record<string, string>) {
   }
 
   const cfg = buildConfig(values);
-  saveConfig(cfg);
+  const profileName = sanitizeProfileName(nodeDisplayName);
+  createProfile(profileName, cfg, { node_id: nodeId, node_secret: nodeSecret });
   reloadConfig();
-
-  saveIdentity(getConfig().identity_file, { agent_id: agentId, secret });
-  console.log(`Agent "${displayName}" (${agentId}) imported!`);
+  console.log(`Agent "${nodeDisplayName}" (${nodeId}) imported to profile "${profileName}"!`);
 }
 
 async function cmdRun() {
@@ -186,15 +209,19 @@ async function cmdRun() {
   }
 
   const cfg = getConfig();
-  const identity = loadIdentity(cfg.identity_file);
+  const identity = loadIdentity(cfg.node_identity_file);
   if (!identity) {
     console.error("No identity found. Run 'setup' or 'import' first.");
     process.exit(1);
   }
 
+  const viewer = startViewerServer(4242);
+  log(`Watch your node -> http://127.0.0.1:${viewer.port}`);
+
   const ac = new AbortController();
   const shutdown = () => {
     log("Shutting down...");
+    viewer.close();
     ac.abort();
   };
   process.on("SIGINT", shutdown);
@@ -216,14 +243,14 @@ async function cmdAsk(positionals: string[]) {
   }
 
   const cfg = getConfig();
-  const identity = loadIdentity(cfg.identity_file);
+  const identity = loadIdentity(cfg.node_identity_file);
   if (!identity) {
     console.error("No identity found. Run 'setup' or 'import' first.");
     process.exit(1);
   }
 
   const client = new FortyTwoClient();
-  await client.login(identity.agent_id, identity.secret);
+  await client.login(identity.node_id, identity.node_secret);
 
   const encrypted = Buffer.from(question, "utf-8").toString("base64");
   const res = await client.createQuery(encrypted, "general");
@@ -252,35 +279,143 @@ function cmdIdentity() {
   for (const line of executeCommand("/identity")) console.log(line);
 }
 
+async function cmdProfile(positionals: string[]) {
+  const sub = positionals[0];
+
+  if (!sub || sub === "list") {
+    const profiles = listProfiles();
+    if (profiles.length === 0) {
+      console.log("No profiles. Run 'fortytwo setup' or 'fortytwo import' to create one.");
+      return;
+    }
+    console.log("Profiles:");
+    for (const p of profiles) {
+      const marker = p.active ? " (active)" : "";
+      console.log(`  ${p.name}${marker}`);
+    }
+    return;
+  }
+
+  if (sub === "switch") {
+    const name = positionals[1];
+    if (!name) {
+      const profiles = listProfiles();
+      if (profiles.length === 0) {
+        console.error("No profiles available.");
+        process.exit(1);
+      }
+      console.log("Available profiles:");
+      for (const p of profiles) {
+        const marker = p.active ? " (active)" : "";
+        console.log(`  ${p.name}${marker}`);
+      }
+      console.log("\nUsage: fortytwo profile switch <name>");
+      return;
+    }
+    try {
+      switchProfile(name);
+      console.log(`Switched to profile "${name}".`);
+    } catch (err) {
+      console.error(String(err instanceof Error ? err.message : err));
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === "create") {
+    const { setConfigDir } = await import("./config.js");
+    const tempName = `new-${Date.now()}`;
+    setConfigDir(getProfileDir(tempName));
+    await import("./index.js");
+    return;
+  }
+
+  if (sub === "delete") {
+    const name = positionals[1];
+    if (!name) {
+      console.error("Usage: fortytwo profile delete <name>");
+      process.exit(1);
+    }
+    try {
+      deleteProfile(name);
+      console.log(`Profile "${name}" deleted.`);
+    } catch (err) {
+      console.error(String(err instanceof Error ? err.message : err));
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === "show") {
+    const name = positionals[1];
+    const profiles = listProfiles();
+    const target = name
+      ? profiles.find((p) => p.name === name)
+      : profiles.find((p) => p.active);
+    if (!target) {
+      console.error(name ? `Profile "${name}" not found.` : "No active profile.");
+      process.exit(1);
+    }
+
+    const dir = getProfileDir(target.name);
+    const cfgPath = join(dir, "config.json");
+    if (!existsSync(cfgPath)) {
+      console.error(`Config not found for profile "${target.name}".`);
+      process.exit(1);
+    }
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+    console.log(`Profile: ${target.name}${target.active ? " (active)" : ""}`);
+    for (const [k, v] of Object.entries(cfg)) {
+      const display = (k === "openrouter_api_key" && typeof v === "string" && v.length > 8)
+        ? v.slice(0, 4) + "***" + v.slice(-4)
+        : String(v);
+      console.log(`  ${k}: ${display}`);
+    }
+    return;
+  }
+
+  console.error(`Unknown profile command: ${sub}`);
+  console.error("Usage: fortytwo profile list|switch|create|delete|show");
+  process.exit(1);
+}
+
 function printHelp() {
   console.log(`fortytwo — FortyTwo Network Swarm Client
 
 Usage:
   fortytwo                          Interactive UI
-  fortytwo setup [flags]            Register new agent
-  fortytwo import [flags]           Import existing agent
-  fortytwo run [-v]                 Run agent (headless)
+  fortytwo setup [flags]            Register new node
+  fortytwo import [flags]           Import existing node
+  fortytwo run [-v]                 Run node (headless)
   fortytwo ask <question>           Submit a question
   fortytwo config show              Show config
   fortytwo config set <key> <value> Update config
-  fortytwo identity                 Show agent credentials
+  fortytwo identity                 Show node credentials
+  fortytwo profile list             List all profiles
+  fortytwo profile switch <name>    Switch active profile
+  fortytwo profile create           Create new profile (interactive)
+  fortytwo profile delete <name>    Delete a profile
+  fortytwo profile show [name]      Show profile config
+  fortytwo version                  Show version
 
 Setup flags:
-  --name NAME              Agent display name
-  --inference-type TYPE    openrouter | local
-  --api-key KEY            OpenRouter API key
-  --llm-api-base URL       Local inference URL
-  --model MODEL            Model name
-  --role ROLE              JUDGE | ANSWERER | ANSWERER_AND_JUDGE
+  --node-name NAME         Node local name
+  --inference-type TYPE    openrouter | self-hosted
+  --openrouter-api-key KEY OpenRouter API key
+  --model-name NAME        Model name
+  --self-hosted-api-base URL Local inference URL
+  --node-name NAME         Local name for the node profile (e.g. "my-judge")
+  --node-role ROLE         JUDGE | ANSWERER | ANSWERER_AND_JUDGE
   --skip-validation        Skip model validation
 
 Import flags:
-  --agent-id UUID          Agent ID
-  --secret SECRET          Agent secret
+  --node-id UUID          Node ID
+  --node-secret SECRET     Node secret
   (+ same inference/model/role flags as setup)
 
 Global flags:
-  -v, --verbose            Verbose logging`);
+  -v, --verbose            Verbose logging
+  -p, --profile NAME       Use specific profile for this command`);
 }
 
 // ── Dispatch ────────────────────────────────────────────────────
@@ -289,6 +424,13 @@ async function run() {
   const { subcommand, flags, positionals } = parseArgs(process.argv);
 
   if (flags.verbose || flags.v) setVerbose(true);
+
+  // Initialize profile system
+  if (flags.profile) setProfileOverride(flags.profile);
+  initProfiles();
+
+  // Fire-and-forget update check (don't block startup)
+  const updatePromise = checkForUpdate().catch(() => null);
 
   try {
     switch (subcommand) {
@@ -313,6 +455,12 @@ async function run() {
       case "identity":
         cmdIdentity();
         break;
+      case "profile":
+        await cmdProfile(positionals);
+        break;
+      case "version":
+        console.log(pkg.version);
+        break;
       case "help":
         printHelp();
         break;
@@ -324,6 +472,15 @@ async function run() {
   } catch (err) {
     console.error(`Error: ${err}`);
     process.exit(1);
+  }
+
+  // Show update notification for CLI subcommands (interactive mode handles it in UI)
+  if (subcommand !== null) {
+    const updateInfo = await updatePromise;
+    if (updateInfo?.updateAvailable) {
+      console.log(`\nUpdate available: ${updateInfo.currentVersion} → ${updateInfo.latestVersion}`);
+      console.log(`Run: ${UPDATE_COMMAND}`);
+    }
   }
 }
 

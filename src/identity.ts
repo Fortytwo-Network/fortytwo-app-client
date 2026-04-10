@@ -10,8 +10,8 @@ const MAX_TIEBREAK_ATTEMPTS = 5;
 export type LogFn = (msg: string) => void;
 
 export interface Identity {
-  agent_id: string;
-  secret: string;
+  node_id: string;
+  node_secret: string;
   public_key_pem?: string;
   private_key_pem?: string;
 }
@@ -33,7 +33,10 @@ export function loadIdentity(path: string): Identity | null {
   if (!existsSync(path)) return null;
   try {
     const data = JSON.parse(readFileSync(path, "utf-8"));
-    if (data.agent_id && data.secret) return data as Identity;
+
+    if (data.agent_id && !data.node_id) data.node_id = data.agent_id;
+    if (data.secret && !data.node_secret) data.node_secret = data.secret;
+    if (data.node_id && data.node_secret) return data as Identity;
     return null;
   } catch {
     return null;
@@ -76,12 +79,12 @@ async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<Cha
         compared++;
         if (result !== 0) solved++;
         const { active, max } = llm.getLlmConcurrency();
-        log(`~Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
+        log(`~↳ Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
         return [idx, ch, result];
       } catch {
         compared++;
         const { active, max } = llm.getLlmConcurrency();
-        log(`~Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
+        log(`~↳ Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
         return [idx, ch, 0];
       } finally {
         clearTimeout(timeout);
@@ -124,7 +127,7 @@ async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<Cha
     responses.set(idx, { challenge_id: String(ch.id), choice });
     solved++;
     const { active, max } = llm.getLlmConcurrency();
-    log(`~Solving: ${solved}/${total} [LLM ${active}/${max}]`);
+    log(`~↳ Solving: ${solved}/${total} [LLM ${active}/${max}]`);
   }
 
   // Return in original order
@@ -133,14 +136,15 @@ async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<Cha
 
 export async function registerAgent(
   client: FortyTwoClient,
-  displayName = "JudgeBot",
+  displayName = "JudgeNode",
   log: LogFn = console.log,
 ): Promise<Identity> {
   let attempt = 0;
 
   while (true) {
     attempt++;
-    log(`Attempt ${attempt} — registering "${displayName}"...`);
+    log(`Registering "${displayName}"`);
+    log(`↳ Attempt ${attempt}`);
 
     const { privatePem, publicPem } = generateRsaKeypair();
 
@@ -153,32 +157,34 @@ export async function registerAgent(
       log(`~Solving: 0/${challenges.length}`);
 
       const responses = await solveChallenges(challenges, log);
-      log(`Submitting answers (need ${requiredCorrect} correct)...`);
+      log(`↳ Submitting answers (need ${requiredCorrect} correct)...`);
       const result = await client.completeRegistration(sessionId, responses);
 
       if (!result.passed) {
         const correct = result.correct_count ?? 0;
-        log(`Failed: ${correct}/${challenges.length} correct (need ${requiredCorrect}). Retrying...`);
+        log(`✕ Attempt ${attempt}: ${correct}/${challenges.length} correct (need ${requiredCorrect})`);
+        log(`↳ Retrying in 2s...`);
         await sleep(2000);
         continue;
       }
 
-      const agentId = String(result.agent_id);
+      const nodeId = String(result.agent_id);
       const correct = result.correct_count ?? challenges.length;
-      const secret = result.secret as string;
+      const node_secret = result.secret as string;
 
       const identity: Identity = {
-        agent_id: agentId,
-        secret,
+        node_id: nodeId,
+        node_secret,
         public_key_pem: publicPem,
         private_key_pem: privatePem,
       };
-      saveIdentity(config.get().identity_file, identity);
-      log(`Passed! ${correct}/${challenges.length} correct — Agent ID: ${agentId}`);
+      saveIdentity(config.get().node_identity_file, identity);
+      log(`✓ Passed! ${correct}/${challenges.length} correct — Node ID: ${nodeId}`);
 
       return identity;
     } catch (err) {
-      log(`Attempt ${attempt} error: ${err}. Retrying in 5s...`);
+      log(`✕ Attempt ${attempt}: ${err}`);
+      log(`↳ Retrying in 5s...`);
       await sleep(5000);
     }
   }
@@ -186,18 +192,18 @@ export async function registerAgent(
 
 export async function reactivateAccount(
   client: FortyTwoClient,
-  agentId: string,
-  secret: string,
+  nodeId: string,
+  nodeSecret: string,
   log: LogFn = console.log,
 ): Promise<void> {
   let attempt = 0;
 
   while (true) {
     attempt++;
-    log(`Reactivation attempt ${attempt}...`);
+    log(`↳ Reactivation attempt ${attempt}`);
 
     try {
-      const challengeData = await client.startReactivation(agentId, secret);
+      const challengeData = await client.startReactivation(nodeId, nodeSecret);
       const sessionId = challengeData.challenge_session_id as string;
       const challenges = challengeData.challenges as Challenge[];
       const requiredCorrect = (challengeData.required_correct as number) ?? 17;
@@ -205,20 +211,22 @@ export async function reactivateAccount(
       log(`~Solving: 0/${challenges.length}`);
 
       const responses = await solveChallenges(challenges, log);
-      log(`Submitting answers (need ${requiredCorrect} correct)...`);
+      log(`↳ Submitting answers (need ${requiredCorrect} correct)...`);
       const result = await client.completeReactivation(sessionId, responses);
 
       if (!result.passed) {
         const correct = result.correct_count ?? 0;
-        log(`Failed: ${correct}/${challenges.length} correct. Retrying...`);
+        log(`✕ Failed: ${correct}/${challenges.length} correct`);
+        log(`↳ Retrying in 5s...`);
         await sleep(5000);
         continue;
       }
 
-      log(`Reactivation successful! (attempt ${attempt})`);
+      log(`✓ Reactivation successful! (attempt ${attempt})`);
       return;
     } catch (err) {
-      log(`Reactivation attempt ${attempt} error: ${err}. Retrying in 10s...`);
+      log(`✕ Reactivation attempt ${attempt}: ${err}`);
+      log(`↳ Retrying in 10s...`);
       await sleep(10_000);
     }
   }
@@ -232,7 +240,7 @@ export async function resetAccount(
 
   while (true) {
     attempt++;
-    log(`Reset attempt ${attempt}...`);
+    log(`↳ Reset attempt ${attempt}`);
 
     try {
       const challengeData = await client.startAccountReset();
@@ -244,26 +252,29 @@ export async function resetAccount(
       log(`~Solving: 0/${challenges.length}`);
 
       const responses = await solveChallenges(challenges, log);
-      log(`Submitting answers (need ${requiredCorrect} correct)...`);
+      log(`↳ Submitting answers (need ${requiredCorrect} correct)...`);
       const result = await client.completeAccountReset(sessionId, responses);
 
       if (!result.passed) {
         const correct = result.correct_count ?? 0;
         const waitTime = Math.max(cooldownMinutes * 60 * 1000, 5000);
-        log(`Failed: ${correct}/${challenges.length} correct. Waiting...`);
+        log(`✕ Failed: ${correct}/${challenges.length} correct`);
+        log(`↳ Waiting...`);
         await sleep(waitTime);
         continue;
       }
 
-      log(`Reset successful! (attempt ${attempt})`);
+      log(`✓ Reset successful! (attempt ${attempt})`);
       return;
     } catch (err) {
       const msg = String(err).toLowerCase();
       if (msg.includes("cooldown") || msg.includes("limited")) {
-        log(`Reset attempt ${attempt} hit cooldown. Waiting 10 min...`);
+        log(`✕ Reset attempt ${attempt} hit cooldown`);
+        log(`↳ Waiting 10 min...`);
         await sleep(600_000);
       } else {
-        log(`Reset attempt ${attempt} error: ${err}. Retrying in 10s...`);
+        log(`✕ Reset attempt ${attempt}: ${err}`);
+        log(`↳ Retrying in 10s...`);
         await sleep(10_000);
       }
     }

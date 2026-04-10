@@ -1,20 +1,43 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockCreate = vi.fn();
 
 vi.mock("openai", () => {
+  class APIError extends Error {
+    status: number;
+    constructor(status: number, msg = "") {
+      super(msg);
+      this.status = status;
+    }
+  }
+  class RateLimitError extends APIError { constructor(m = "") { super(429, m); } }
+  class AuthenticationError extends APIError { constructor(m = "") { super(401, m); } }
+  class PermissionDeniedError extends APIError { constructor(m = "") { super(403, m); } }
+  class BadRequestError extends APIError { constructor(m = "") { super(400, m); } }
+  class NotFoundError extends APIError { constructor(m = "") { super(404, m); } }
+  class APIConnectionError extends Error {}
+  class APIConnectionTimeoutError extends APIConnectionError {}
+
   return {
     default: class {
       chat = { completions: { create: mockCreate } };
       constructor() {}
     },
+    APIError,
+    RateLimitError,
+    AuthenticationError,
+    PermissionDeniedError,
+    BadRequestError,
+    NotFoundError,
+    APIConnectionError,
+    APIConnectionTimeoutError,
   };
 });
 
 const mockLlmCfg: Record<string, any> = {
   inference_type: "openrouter",
   openrouter_api_key: "test-key",
-  llm_model: "test-model",
+  model_name: "test-model",
   llm_concurrency: 2,
   llm_timeout: 10,
 };
@@ -42,6 +65,17 @@ describe("llm", () => {
   function mockResponse(content: string) {
     mockCreate.mockResolvedValue({
       choices: [{ message: { content } }],
+    });
+  }
+
+  function mockStreamResponse(content: string) {
+    const chunks = content.split("").map((ch) => ({
+      choices: [{ delta: { content: ch } }],
+    }));
+    mockCreate.mockResolvedValue({
+      [Symbol.asyncIterator]: async function* () {
+        for (const chunk of chunks) yield chunk;
+      },
     });
   }
 
@@ -131,7 +165,7 @@ describe("llm", () => {
 
   describe("generateAnswer", () => {
     it("sends system + user messages", async () => {
-      mockResponse("The answer is 42");
+      mockStreamResponse("The answer is 42");
       const result = await generateAnswer("Be helpful", "What is 6*7?");
       expect(result).toBe("The answer is 42");
       const call = mockCreate.mock.calls[0];
@@ -205,6 +239,104 @@ describe("llm", () => {
       mockLlmCfg.openrouter_api_key = "";
       await expect(callLlm("test")).rejects.toThrow("OPENROUTER_API_KEY is not set");
       mockLlmCfg.openrouter_api_key = origKey;
+    });
+  });
+
+  describe("OpenRouter error messages", () => {
+    let RateLimitError: any;
+    let AuthenticationError: any;
+    let PermissionDeniedError: any;
+    let BadRequestError: any;
+    let APIError: any;
+    let APIConnectionTimeoutError: any;
+
+    beforeEach(async () => {
+      const mod = await import("openai");
+      RateLimitError = (mod as any).RateLimitError;
+      AuthenticationError = (mod as any).AuthenticationError;
+      PermissionDeniedError = (mod as any).PermissionDeniedError;
+      BadRequestError = (mod as any).BadRequestError;
+      APIError = (mod as any).APIError;
+      APIConnectionTimeoutError = (mod as any).APIConnectionTimeoutError;
+      mockLlmCfg.inference_type = "openrouter";
+      resetLlmClient();
+    });
+
+    it("rate limit (429) shows OpenRouter message", async () => {
+      mockCreate.mockRejectedValue(new RateLimitError());
+      await expect(callLlm("test")).rejects.toThrow("OpenRouter rate limit exceeded");
+    });
+
+    it("authentication (401) shows OpenRouter message", async () => {
+      mockCreate.mockRejectedValue(new AuthenticationError());
+      await expect(callLlm("test")).rejects.toThrow("OpenRouter authentication failed");
+    });
+
+    it("permission denied (403) shows moderation message", async () => {
+      mockCreate.mockRejectedValue(new PermissionDeniedError());
+      await expect(callLlm("test")).rejects.toThrow("OpenRouter rejected the request");
+    });
+
+    it("bad request (400) shows OpenRouter message", async () => {
+      mockCreate.mockRejectedValue(new BadRequestError());
+      await expect(callLlm("test")).rejects.toThrow("OpenRouter bad request");
+    });
+
+    it("payment required (402) shows credits message", async () => {
+      mockCreate.mockRejectedValue(new APIError(402, "insufficient credits"));
+      await expect(callLlm("test")).rejects.toThrow("OpenRouter credits exhausted");
+    });
+
+    it("bad gateway (502) shows unavailable message", async () => {
+      mockCreate.mockRejectedValue(new APIError(502, "bad gateway"));
+      await expect(callLlm("test")).rejects.toThrow("temporarily unavailable");
+    });
+
+    it("service unavailable (503) shows unavailable message", async () => {
+      mockCreate.mockRejectedValue(new APIError(503, "no provider"));
+      await expect(callLlm("test")).rejects.toThrow("temporarily unavailable");
+    });
+
+    it("timeout shows OpenRouter timeout message", async () => {
+      mockCreate.mockRejectedValue(new APIConnectionTimeoutError());
+      await expect(callLlm("test")).rejects.toThrow("OpenRouter request timed out");
+    });
+  });
+
+  describe("local LLM error messages", () => {
+    let APIConnectionError: any;
+    let APIConnectionTimeoutError: any;
+    let NotFoundError: any;
+
+    beforeEach(async () => {
+      const mod = await import("openai");
+      APIConnectionError = (mod as any).APIConnectionError;
+      APIConnectionTimeoutError = (mod as any).APIConnectionTimeoutError;
+      NotFoundError = (mod as any).NotFoundError;
+      mockLlmCfg.inference_type = "self-hosted";
+      mockLlmCfg.self_hosted_api_base = "http://localhost:11434/v1";
+      resetLlmClient();
+    });
+
+    afterEach(() => {
+      mockLlmCfg.inference_type = "openrouter";
+      delete mockLlmCfg.self_hosted_api_base;
+      resetLlmClient();
+    });
+
+    it("timeout shows local LLM message", async () => {
+      mockCreate.mockRejectedValue(new APIConnectionTimeoutError());
+      await expect(callLlm("test")).rejects.toThrow("Local LLM at http://localhost:11434/v1 timed out");
+    });
+
+    it("connection error shows local LLM message", async () => {
+      mockCreate.mockRejectedValue(new APIConnectionError());
+      await expect(callLlm("test")).rejects.toThrow("Cannot connect to local LLM");
+    });
+
+    it("not found shows model message", async () => {
+      mockCreate.mockRejectedValue(new NotFoundError());
+      await expect(callLlm("test")).rejects.toThrow('Model "test-model" not found');
     });
   });
 });

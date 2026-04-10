@@ -2,7 +2,7 @@ import { join } from "node:path";
 import {
   type UserConfig,
   type InferenceType,
-  CONFIG_DIR,
+  getConfigDir,
 } from "./config.js";
 
 export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
@@ -47,13 +47,32 @@ export async function fetchModels(baseUrl: string, apiKey: string): Promise<Fetc
   }
 }
 
+export function validateConfig(values: Record<string, string>): ValidateResult {
+  const inferenceType = values.inference_type;
+  if (inferenceType !== "openrouter" && inferenceType !== "self-hosted") {
+    return { ok: false, error: `inference_type is invalid: "${inferenceType}". Options: "openrouter" | "self-hosted"` };
+  }
+
+  if (inferenceType === "openrouter" && !values.openrouter_api_key) {
+    return { ok: false, error: `openrouter_api_key is required for OpenRouter inference. Use /config set openrouter_api_key <key>` };
+  }
+  if (inferenceType === "self-hosted" && !values.self_hosted_api_base) {
+    return { ok: false, error: `self_hosted_api_base is not set for local inference. Use /config set self_hosted_api_base <url>` };
+  }
+
+  if (!values.model_name) {
+    return { ok: false, error: `model_name is not set. Use /config set model_name <model>` };
+  }
+  return { ok: true };
+}
+
 export async function validateModel(values: Record<string, string>): Promise<ValidateResult> {
-  const isLocal = values.inference_type === "local";
+  const isLocal = values.inference_type === "self-hosted";
   const baseUrl = isLocal
-    ? values.llm_api_base?.replace(/\/+$/, "")
+    ? values.self_hosted_api_base?.replace(/\/+$/, "")
     : OPENROUTER_BASE;
   const apiKey = isLocal ? "EMPTY" : values.openrouter_api_key;
-  const model = values.llm_model;
+  const model = values.model_name;
 
   const url = `${baseUrl}/models`;
   const headers: Record<string, string> = {
@@ -86,7 +105,7 @@ export async function validateModel(values: Record<string, string>): Promise<Val
     }
 
     if (!models.includes(model)) {
-      return { ok: false, error: `Model "${model}" not found. Available: ${models.slice(0, 5).join(", ")}${models.length > 5 ? ` (+${models.length - 5} more)` : ""}` };
+      return { ok: false, error: `Model "${model}" not found. Choose correct one and restart the client.` };
     }
   } catch {
     return { ok: true };
@@ -96,21 +115,21 @@ export async function validateModel(values: Record<string, string>): Promise<Val
 }
 
 export function buildConfig(values: Record<string, string>): UserConfig {
-  const isLocal = values.inference_type === "local";
+  const isLocal = values.inference_type === "self-hosted";
   return {
-    agent_name: values.agent_name || values._display_name || values.agent_id || "",
-    display_name: values.agent_name || values._display_name || values.agent_id || "",
-    inference_type: isLocal ? "local" : "openrouter",
+    node_name: values.node_name || values.node_display_name || values.node_id || "",
+    node_display_name: values.node_name || values.node_display_name || values.node_id || "",
+    inference_type: isLocal ? "self-hosted" : "openrouter",
     openrouter_api_key: values.openrouter_api_key ?? "",
-    llm_api_base: values.llm_api_base ?? "",
-    fortytwo_api_base: "https://app.fortytwo.network/api",
-    identity_file: join(CONFIG_DIR, "identity.json"),
-    poll_interval: 120,
-    llm_model: values.llm_model || (isLocal ? "" : "qwen/qwen3.5-35b-a3b"),
+    self_hosted_api_base: values.self_hosted_api_base ?? "",
+    fortytwo_api_base: values.fortytwo_api_base ?? "https://app.fortytwo.network/api",
+    node_identity_file: values.node_identity_file ?? join(getConfigDir(), "identity.json"),
+    poll_interval: Number(values.poll_interval) || 120,
+    model_name: values.model_name || (isLocal ? "" : "qwen/qwen3.5-35b-a3b"),
     llm_concurrency: 40,
     llm_timeout: 120,
     min_balance: 5.0,
-    bot_role: values.bot_role || "JUDGE",
+    node_role: values.node_role || "JUDGE",
     answerer_system_prompt: "You are a helpful assistant.",
   };
 }

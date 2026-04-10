@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { Text, useInput } from "ink";
 import chalk from "chalk";
+import { COLORS } from "./constants.js";
 
 type Props = {
   placeholder?: string;
@@ -62,23 +63,23 @@ export function CommandInput({ placeholder = "", suggestions, onSubmit }: Props)
   const rendered = useMemo(() => {
     if (value.length === 0) {
       return placeholder
-        ? chalk.inverse(placeholder[0]) + chalk.dim(placeholder.slice(1))
+        ? chalk.hex(COLORS.GREY_LIGHT).inverse(placeholder[0]) + chalk.hex(COLORS.GREY_LIGHT)(placeholder.slice(1))
         : chalk.inverse(" ");
     }
 
     let result = "";
     for (let i = 0; i < value.length; i++) {
-      result += i === cursor ? chalk.inverse(value[i]!) : value[i];
+      result += i === cursor ? chalk.hex(COLORS.BLUE_CONTENT).inverse(value[i]!) : chalk.hex(COLORS.BLUE_CONTENT)(value[i]!);
     }
 
     if (suggestion) {
       if (cursor === value.length) {
-        result += chalk.inverse(suggestion[0]) + chalk.dim(suggestion.slice(1));
+        result += chalk.white.inverse(suggestion[0]) + chalk.hex(COLORS.GREY_NEUTRAL)(suggestion.slice(1));
       } else {
-        result += chalk.dim(suggestion);
+        result += chalk.hex(COLORS.GREY_NEUTRAL)(suggestion);
       }
     } else if (cursor === value.length) {
-      result += chalk.inverse(" ");
+      result += chalk.white.inverse(" ");
     }
 
     return result;

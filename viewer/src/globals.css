@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Haffer XH";
+  src: url("/fonts/HafferXH-TRIAL-Light.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Haffer XH";
+  src: url("/fonts/HafferXH-TRIAL-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Haffer XH";
+  src: url("/fonts/HafferXH-TRIAL-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Haffer XH";
+  src: url("/fonts/HafferXH-TRIAL-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Haffer XH";
+  src: url("/fonts/HafferXH-TRIAL-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Haffer XH";
+  src: url("/fonts/HafferXH-TRIAL-Heavy.woff2") format("woff2");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Haffer XH Mono";
+  src: url("/fonts/HafferXHMono-TRIAL-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Haffer XH Mono";
+  src: url("/fonts/HafferXHMono-TRIAL-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  ::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    background: transparent !important;
+  }
+
+  * {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+}
+
+@layer utilities {
+  .log-entry {
+    animation: log-slide 0.25s ease-out both;
+  }
+  @keyframes log-slide {
+    from { opacity: 0; transform: translateX(-8px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .think-block {
+    animation: think-slide-in 0.25s ease-out both;
+  }
+  @keyframes think-slide-in {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .shimmer-line {
+    position: relative;
+    overflow: hidden;
+  }
+  .shimmer-slide {
+    animation: shimmer-move 1.5s ease-in-out infinite;
+  }
+  @keyframes shimmer-move {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(350%); }
+  }
+
+  .thinking-spinner {
+    border-radius: 50% !important;
+    animation: spin 2.5s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+}

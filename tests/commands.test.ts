@@ -1,19 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockConfig = {
-  agent_name: "testbot",
-  display_name: "TestBot",
+  node_name: "testbot",
+  node_display_name: "TestBot",
   inference_type: "openrouter" as const,
   openrouter_api_key: "sk-or-v1-abcdef1234567890",
-  llm_api_base: "",
+  self_hosted_api_base: "",
   fortytwo_api_base: "https://app.fortytwo.network/api",
   identity_file: "/tmp/identity.json",
   poll_interval: 120,
-  llm_model: "qwen/qwen3.5-35b-a3b",
+  model_name: "qwen/qwen3.5-35b-a3b",
   llm_concurrency: 40,
   llm_timeout: 120,
   min_balance: 5.0,
-  bot_role: "JUDGE",
+  node_role: "JUDGE",
   answerer_system_prompt: "You are a helpful assistant.",
 };
 
@@ -27,8 +27,8 @@ vi.mock("../src/config.js", () => ({
 
 vi.mock("../src/identity.js", () => ({
   loadIdentity: (path: string) => ({
-    agent_id: "test-agent-id",
-    secret: "test-secret-key",
+    node_id: "test-agent-id",
+    node_secret: "test-secret-key",
   }),
 }));
 
@@ -38,6 +38,13 @@ vi.mock("../src/utils.js", () => ({
 
 vi.mock("../src/llm.js", () => ({
   resetLlmClient: vi.fn(),
+}));
+
+vi.mock("../src/profiles.js", () => ({
+  listProfiles: vi.fn().mockReturnValue([
+    { name: "default", active: true, agentName: "testbot", nodeId: "test-agent-id" },
+  ]),
+  switchProfile: vi.fn(),
 }));
 
 import { executeCommand } from "../src/commands.js";
@@ -66,12 +73,12 @@ describe("executeCommand", () => {
     expect(result[0]).toBe("Commands:");
   });
 
-  it("/identity shows agent_id and secret", () => {
+  it("/identity shows node_id and secret", () => {
     const result = executeCommand("/identity");
     expect(result).toEqual([
       "Identity:",
-      "  agent_id: test-agent-id",
-      "  secret:   test-secret-key",
+      "  node_id: test-agent-id",
+      "  node_secret:   test-secret-key",
     ]);
   });
 
@@ -85,19 +92,19 @@ describe("executeCommand", () => {
   });
 
   it("/config set saves and reloads", () => {
-    const result = executeCommand("/config set llm_model gpt-4");
+    const result = executeCommand("/config set model_name gpt-4");
     expect(savedConfig).not.toBeNull();
-    expect(savedConfig.llm_model).toBe("gpt-4");
-    expect(result[0]).toContain("llm_model");
+    expect(savedConfig.model_name).toBe("gpt-4");
+    expect(result[0]).toContain("model_name");
   });
 
   it("/config set LLM key resets client", () => {
-    executeCommand("/config set llm_model test");
+    executeCommand("/config set model_name test");
     expect(resetLlmClient).toHaveBeenCalled();
   });
 
   it("/config set non-LLM key does not reset client", () => {
-    executeCommand("/config set bot_role ANSWERER");
+    executeCommand("/config set node_role ANSWERER");
     expect(resetLlmClient).not.toHaveBeenCalled();
   });
 
@@ -147,5 +154,75 @@ describe("executeCommand", () => {
   it("/config without subcommand returns usage", () => {
     const result = executeCommand("/config");
     expect(result[0]).toContain("Usage:");
+  });
+
+  describe("/profile", () => {
+    it("/profile list shows profiles", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([
+        { name: "my-judge", active: true, agentName: "MyJudge", nodeId: "aaaa-bbbb-cccc" },
+        { name: "answerer", active: false, agentName: "Answerer", nodeId: "dddd-eeee-ffff" },
+      ]);
+      const result = executeCommand("/profile list");
+      expect(result[0]).toBe("Profiles:");
+      expect(result[1]).toContain("my-judge");
+      expect(result[1]).toContain("(active)");
+      expect(result[2]).toContain("answerer");
+      expect(result[2]).not.toContain("(active)");
+    });
+
+    it("/profile without subcommand shows list", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([
+        { name: "default", active: true, agentName: "Bot", nodeId: "id-1" },
+      ]);
+      const result = executeCommand("/profile");
+      expect(result[0]).toBe("Profiles:");
+      expect(result[1]).toContain("default");
+    });
+
+    it("/profile list returns message when no profiles", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([]);
+      const result = executeCommand("/profile list");
+      expect(result[0]).toContain("No profiles");
+    });
+
+    it("/profile switch changes profile and returns marker", async () => {
+      const { switchProfile } = await import("../src/profiles.js");
+      const result = executeCommand("/profile switch my-judge");
+      expect(switchProfile).toHaveBeenCalledWith("my-judge");
+      expect(resetLlmClient).toHaveBeenCalled();
+      expect(result[0]).toContain("__SWITCH_PROFILE__:my-judge");
+      expect(result[1]).toContain("Switched to profile");
+    });
+
+    it("/profile switch without name shows usage", async () => {
+      const { listProfiles } = await import("../src/profiles.js");
+      vi.mocked(listProfiles).mockReturnValue([
+        { name: "default", active: true, agentName: "Bot", nodeId: "id-1" },
+      ]);
+      const result = executeCommand("/profile switch");
+      expect(result[0]).toContain("Usage:");
+      expect(result).toEqual(expect.arrayContaining([expect.stringContaining("Available profiles")]));
+    });
+
+    it("/profile switch returns error for unknown profile", async () => {
+      const { switchProfile } = await import("../src/profiles.js");
+      vi.mocked(switchProfile).mockImplementation(() => { throw new Error('Profile "nope" not found'); });
+      const result = executeCommand("/profile switch nope");
+      expect(result[0]).toContain("not found");
+    });
+
+    it("/profile create returns create marker", () => {
+      const result = executeCommand("/profile create");
+      expect(result[0]).toBe("__CREATE_PROFILE__");
+      expect(result[1]).toContain("Starting profile creation");
+    });
+
+    it("/profile unknown subcommand shows profile help", () => {
+      const result = executeCommand("/profile unknown");
+      expect(result[0]).toContain("Profile commands:");
+    });
   });
 });

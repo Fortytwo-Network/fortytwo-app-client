@@ -6,11 +6,11 @@ const mockCfg: Record<string, any> = {
   fortytwo_api_base: "https://api.test.com",
   identity_file: "identity.json",
   poll_interval: 1,
-  llm_model: "test-model",
+  model_name: "test-model",
   llm_concurrency: 5,
   llm_timeout: 10,
   min_balance: 5.0,
-  bot_role: "JUDGE",
+  node_role: "JUDGE",
   answerer_system_prompt: "You are a helpful assistant.",
 };
 
@@ -20,7 +20,7 @@ vi.mock("../src/config.js", () => ({
 }));
 
 const mockClient = {
-  agentId: "agent-1",
+  nodeId: "agent-1",
   login: vi.fn().mockResolvedValue({}),
   getPendingChallenges: vi.fn().mockResolvedValue({ challenges: [] }),
   getActiveQueries: vi.fn().mockResolvedValue({ queries: [] }),
@@ -29,7 +29,7 @@ const mockClient = {
 
 vi.mock("../src/api-client.js", () => {
   class MockFortyTwoClient {
-    agentId = mockClient.agentId;
+    nodeId = mockClient.nodeId;
     login = mockClient.login;
     getPendingChallenges = mockClient.getPendingChallenges;
     getActiveQueries = mockClient.getActiveQueries;
@@ -39,7 +39,7 @@ vi.mock("../src/api-client.js", () => {
 });
 
 vi.mock("../src/identity.js", () => ({
-  loadIdentity: vi.fn().mockReturnValue({ agent_id: "agent-1", secret: "sec" }),
+  loadIdentity: vi.fn().mockReturnValue({ node_id: "agent-1", secret: "sec" }),
   resetAccount: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -64,6 +64,7 @@ vi.mock("../src/utils.js", () => ({
   secondsUntilDeadline: vi.fn().mockReturnValue(600),
   setVerbose: vi.fn(),
   log: vi.fn(),
+  getRoleLabel: vi.fn((v) => v),
 }));
 
 import {
@@ -225,7 +226,7 @@ describe("processQueries", () => {
 describe("runCycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCfg.bot_role = "JUDGE";
+    mockCfg.node_role = "JUDGE";
   });
 
   it("processes challenges for JUDGE role", async () => {
@@ -238,7 +239,7 @@ describe("runCycle", () => {
   });
 
   it("processes queries for ANSWERER role", async () => {
-    mockCfg.bot_role = "ANSWERER";
+    mockCfg.node_role = "ANSWERER";
     mockClient.getActiveQueries.mockResolvedValue({ queries: [] });
     const count = await runCycle(mockClient as any);
     expect(count).toBe(0);
@@ -247,7 +248,7 @@ describe("runCycle", () => {
   });
 
   it("processes both for ANSWERER_AND_JUDGE role", async () => {
-    mockCfg.bot_role = "ANSWERER_AND_JUDGE";
+    mockCfg.node_role = "ANSWERER_AND_JUDGE";
     vi.mocked(isLlmBusy).mockReturnValue(false);
     mockClient.getActiveQueries.mockResolvedValue({ queries: [] });
     mockClient.getPendingChallenges.mockResolvedValue({ challenges: [] });
@@ -258,20 +259,20 @@ describe("runCycle", () => {
   });
 
   it("logs warning for unknown role", async () => {
-    mockCfg.bot_role = "UNKNOWN";
+    mockCfg.node_role = "UNKNOWN";
     const count = await runCycle(mockClient as any);
     expect(count).toBe(0);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Unknown BOT_ROLE"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Unknown NODE_ROLE"));
   });
 });
 
 describe("main", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCfg.bot_role = "JUDGE";
+    mockCfg.node_role = "JUDGE";
     mockCfg.inference_type = "openrouter";
     mockCfg.openrouter_api_key = "test-key";
-    vi.mocked(loadIdentity).mockReturnValue({ agent_id: "agent-1", secret: "sec" });
+    vi.mocked(loadIdentity).mockReturnValue({ node_id: "agent-1", secret: "sec" });
   });
 
   it("runs one cycle then stops on abort", async () => {
@@ -306,13 +307,13 @@ describe("main", () => {
     mockCfg.openrouter_api_key = "test-key";
   });
 
-  it("exits on invalid bot_role", async () => {
-    mockCfg.bot_role = "BAD_ROLE";
+  it("exits on invalid node_role", async () => {
+    mockCfg.node_role = "BAD_ROLE";
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
     await expect(main()).rejects.toThrow("exit");
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
-    mockCfg.bot_role = "JUDGE";
+    mockCfg.node_role = "JUDGE";
   });
 
   it("resets account on InsufficientFundsError", async () => {
@@ -352,7 +353,7 @@ describe("main", () => {
   });
 
   it("skips API key check for local inference", async () => {
-    mockCfg.inference_type = "local";
+    mockCfg.inference_type = "self-hosted";
     mockCfg.openrouter_api_key = "";
     mockClient.login.mockResolvedValue({});
     vi.mocked(isLlmBusy).mockReturnValue(false);

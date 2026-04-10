@@ -2,6 +2,7 @@ import * as config from "./config.js";
 import { log, mapWithConcurrency, pinTask, unpinTask } from "./utils.js";
 import { FortyTwoClient } from "./api-client.js";
 import * as llm from "./llm.js";
+import { viewerBus, type JudgeDetail } from "./event-bus.js";
 
 const RANKING_LLM_RETRIES = 0;
 
@@ -102,7 +103,7 @@ export async function judgeChallenge(
     const estimatedTime = estimateLlmTime(answerCountHint);
     const estimatedTotal = estimatedTime + 30;
     if (estimatedTotal > remainingSeconds) {
-      log(`[${tag}] Time budget exceeded: need ~${Math.round(estimatedTotal)}s but only ${Math.round(remainingSeconds)}s remaining. Skipping.`);
+      log(`[${tag}] ↳ Time budget exceeded: need ~${Math.round(estimatedTotal)}s but only ${Math.round(remainingSeconds)}s left`);
       return;
     }
   }
@@ -110,15 +111,15 @@ export async function judgeChallenge(
   // Step 1: Join the challenge
   try {
     const joinResult = await client.joinChallenge(challengeId);
-    log(`[${tag}] Joined, stake: ${joinResult.stake_amount ?? "?"} FOR`);
+    log(`[${tag}] ✓ Joined, stake: ${joinResult.stake_amount ?? "?"} FOR`);
   } catch (err) {
     const msg = String(err).toLowerCase();
     if (msg.includes("maximum") || msg.includes("full") || msg.includes("participants")) {
-      log(`[${tag}] Challenge full, skipping`);
+      log(`[${tag}] ↳ Challenge full, skipping`);
       return;
     }
     if (msg.includes("already")) {
-      log(`[${tag}] Already joined, proceeding`);
+      log(`[${tag}] ↳ Already joined, proceeding`);
     } else {
       throw err;
     }
@@ -134,7 +135,27 @@ export async function judgeChallenge(
   const answers = (answersResp.answers ?? []) as Answer[];
   if (answers.length === 0) throw new Error(`No answers for challenge ${challengeId}`);
 
-  log(`[${tag}] Got ${answers.length} answers, evaluating quality...`);
+  const judgeDetail: JudgeDetail = {
+    challengeId,
+    questionText: problem,
+    answers: answers.map((a) => ({
+      id: a.id,
+      content: a.decrypted_content ?? "",
+      nodeId: a.agent_id as string | undefined,
+    })),
+    comparisons: [],
+    finalRankings: [],
+    goodAnswers: [],
+    phase: "reading_answers",
+    currentPairA: null,
+    currentPairB: null,
+    comparisonIndex: 0,
+    totalComparisons: 0,
+    scores: {},
+  };
+  viewerBus.setJudgeDetail(judgeDetail);
+
+  log(`[${tag}] ↳ Got ${answers.length} answers, evaluating quality...`);
   pinTask(challengeId, `Judging ${tag}`);
 
   try {
@@ -153,7 +174,7 @@ export async function judgeChallenge(
         const isGood = await llm.evaluateGoodEnough(problem, content, RANKING_LLM_RETRIES, AbortSignal.timeout(60_000));
         evalDone++;
         const verdict = isGood ? "good" : "bad";
-        log(`[${tag}] Eval ${evalDone}/${evalTotal} → ${verdict}`);
+        log(`[${tag}] ↳ Eval ${evalDone}/${evalTotal} → ${verdict}`);
         return [answer, isGood];
       },
     );
@@ -163,7 +184,8 @@ export async function judgeChallenge(
       else badAnswers.push(answer);
     }
 
-    log(`[${tag}] Quality: ${goodAnswers.length} good, ${badAnswers.length} bad`);
+    log(`[${tag}] ✓ Quality: ${goodAnswers.length} good, ${badAnswers.length} bad`);
+    judgeDetail.goodAnswers = goodAnswers.map((a) => a.id);
 
     let answerRankings: string[];
     let goodAnswerIds: string[];
@@ -179,7 +201,10 @@ export async function judgeChallenge(
       const wins: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
       const pairs = buildPairwisePairs(n);
 
-      log(`[${tag}] Running ${pairs.length} pairwise comparisons...`);
+      log(`[${tag}] ↳ Running ${pairs.length} pairwise comparisons...`);
+      judgeDetail.phase = "comparing";
+      judgeDetail.totalComparisons = pairs.length;
+      viewerBus.setJudgeDetail(judgeDetail);
 
       let cmpDone = 0;
       const cmpTotal = pairs.length;
@@ -196,7 +221,16 @@ export async function judgeChallenge(
           );
           cmpDone++;
           const winner = result === "A" ? `#${aIdx + 1} wins` : result === "B" ? `#${bIdx + 1} wins` : result === "U" ? "tie" : "skip";
-          log(`[${tag}] Compare ${cmpDone}/${cmpTotal} (#${aIdx + 1} vs #${bIdx + 1}) → ${winner}`);
+          log(`[${tag}] ↳ Compare ${cmpDone}/${cmpTotal} (#${aIdx + 1} vs #${bIdx + 1}) → ${winner}`);
+          judgeDetail.comparisons.push({
+            a: goodAnswers[aIdx].id,
+            b: goodAnswers[bIdx].id,
+            winner: result ?? "U",
+          });
+          judgeDetail.comparisonIndex = cmpDone;
+          judgeDetail.currentPairA = goodAnswers[aIdx].id;
+          judgeDetail.currentPairB = goodAnswers[bIdx].id;
+          viewerBus.setJudgeDetail(judgeDetail);
           return [aIdx, bIdx, result];
         },
       );
@@ -212,13 +246,20 @@ export async function judgeChallenge(
       }
 
       // Step 6: Run local Bradley-Terry
+      judgeDetail.phase = "ranking_all";
+      viewerBus.setJudgeDetail(judgeDetail);
+
       const strengths = computeBradleyTerry(wins);
       const indexed = strengths
         .map((s, i) => ({ idx: i, strength: s }))
         .sort((a, b) => b.strength - a.strength);
 
       const ranking = indexed.map((x) => `#${x.idx + 1}:${x.strength.toFixed(2)}`).join(" > ");
-      log(`[${tag}] BT ranking: ${ranking}`);
+      log(`[${tag}] ✓ BT ranking: ${ranking}`);
+
+      for (const x of indexed) {
+        judgeDetail.scores[goodAnswers[x.idx].id] = x.strength;
+      }
 
       const rankedGoodIds = indexed.map((x) => goodAnswers[x.idx].id);
       const rankedBadIds = badAnswers.map((a) => a.id);
@@ -227,9 +268,18 @@ export async function judgeChallenge(
     }
 
     // Step 7: Submit vote
-    log(`[${tag}] Submitting vote with ${answerRankings.length} ranked answers...`);
+    judgeDetail.phase = "submitting";
+    judgeDetail.finalRankings = answerRankings;
+    judgeDetail.goodAnswers = goodAnswerIds;
+    viewerBus.setJudgeDetail(judgeDetail);
+
+    log(`[${tag}] ↳ Submitting vote with ${answerRankings.length} ranked answers...`);
     const voteResult = await client.submitVote(challengeId, answerRankings, goodAnswerIds);
-    log(`[${tag}] Vote submitted! vote_id=${voteResult.vote_id ?? "?"}`);
+    log(`[${tag}] ✓ Vote submitted! vote_id=${voteResult.vote_id ?? "?"}`);
+
+    judgeDetail.phase = "done";
+    viewerBus.setJudgeDetail(judgeDetail);
+    viewerBus.updateStats({ judgments: (viewerBus.stats.judgments || 0) + 1 });
   } finally {
     unpinTask(challengeId);
   }

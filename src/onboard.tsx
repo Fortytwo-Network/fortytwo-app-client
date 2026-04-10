@@ -1,29 +1,29 @@
 import { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
-import { TextInput, Select } from "@inkjs/ui";
+import { TextInput, Select, ThemeProvider, extendTheme, defaultTheme } from "@inkjs/ui";
 import {
-  saveConfig,
   reloadConfig,
   get as getConfig,
   type InferenceType,
 } from "./config.js";
 import { FortyTwoClient } from "./api-client.js";
-import { registerAgent, saveIdentity } from "./identity.js";
-import { validateModel, fetchModels, buildConfig } from "./setup-logic.js";
+import { registerAgent } from "./identity.js";
+import { validateConfig, validateModel, fetchModels, buildConfig } from "./setup-logic.js";
+import { createProfile, sanitizeProfileName } from "./profiles.js";
 import { useLoader } from "./loader.js";
-
-const COLOR = "rgb(42, 42, 242)";
+import { COLORS, ROLE_OPTIONS } from "./constants.js";
+import { getRoleLabel } from "./utils.js";
 
 type StepId =
   | "setup_mode"
-  | "agent_name"
-  | "agent_id"
-  | "agent_secret"
+  | "node_name"
+  | "node_id"
+  | "node_secret"
   | "inference_type"
   | "openrouter_api_key"
-  | "llm_api_base"
-  | "llm_model"
-  | "bot_role";
+  | "self_hosted_api_base"
+  | "model_name"
+  | "node_role";
 
 interface StepDef {
   id: StepId;
@@ -34,20 +34,28 @@ interface StepDef {
   options?: { label: string; value: string }[];
 }
 
+const selectTheme = extendTheme(defaultTheme, {
+  components: {
+    Select: {
+      styles: {
+        focusIndicator: () => ({ color: COLORS.WHITE }),
+        label: ({ isFocused }: { isFocused: boolean }) => ({
+          color: isFocused ? COLORS.BLUE_CONTENT : undefined,
+        }),
+        selectedIndicator: () => ({ display: "none" as const }),
+      },
+    },
+  },
+});
+
 const SETUP_MODE_OPTIONS = [
-  { label: "Register new agent", value: "new" },
-  { label: "Import existing agent", value: "import" },
+  { label: "Register new node", value: "new" },
+  { label: "Import existing node", value: "import" },
 ];
 
 const INFERENCE_OPTIONS = [
   { label: "OpenRouter", value: "openrouter" },
-  { label: "Local inference", value: "local" },
-];
-
-const ROLE_OPTIONS = [
-  { label: "ANSWERER_AND_JUDGE — both", value: "ANSWERER_AND_JUDGE" },
-  { label: "JUDGE — only judge challenges", value: "JUDGE" },
-  { label: "ANSWERER — only answer queries", value: "ANSWERER" },
+  { label: "Self-hosted inference", value: "self-hosted" },
 ];
 
 function buildSteps(inferenceType?: InferenceType, setupMode?: string): StepDef[] {
@@ -57,36 +65,37 @@ function buildSteps(inferenceType?: InferenceType, setupMode?: string): StepDef[
 
   if (setupMode === "import") {
     steps.push(
-      { id: "agent_id", label: "Agent ID", type: "text", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
-      { id: "agent_secret", label: "Agent Secret", type: "text", placeholder: "your-secret", mask: true },
+      { id: "node_id", label: "Node ID", type: "text", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+      { id: "node_secret", label: "Node Secret", type: "text", placeholder: "your-secret", mask: true },
     );
   } else {
-    steps.push({ id: "agent_name", label: "Agent Name", type: "text", placeholder: "JudgeBot" });
+    steps.push({ id: "node_name", label: "Node Name", type: "text", placeholder: "JudgeNode" });
   }
 
   steps.push({ id: "inference_type", label: "Inference Provider", type: "select", options: INFERENCE_OPTIONS });
 
-  if (inferenceType === "local") {
+  if (inferenceType === "self-hosted") {
     steps.push(
-      { id: "llm_api_base", label: "Local API Base URL", type: "text", placeholder: "http://localhost:11434/v1" },
-      { id: "llm_model", label: "Model Name", type: "text", placeholder: "llama3" },
+      { id: "self_hosted_api_base", label: "Local API Base URL", type: "text", placeholder: "http://localhost:11434/v1" },
+      { id: "model_name", label: "Model Name", type: "text", placeholder: "llama3" },
     );
   } else if (inferenceType === "openrouter") {
     steps.push(
       { id: "openrouter_api_key", label: "OpenRouter API Key", type: "text", placeholder: "sk-or-...", mask: true },
-      { id: "llm_model", label: "Model Name", type: "text", placeholder: "qwen/qwen3.5-35b-a3b" },
+      { id: "model_name", label: "Model Name", type: "text", placeholder: "qwen/qwen3.5-35b-a3b" },
     );
   }
 
-  steps.push({ id: "bot_role", label: "Bot Role", type: "select", options: ROLE_OPTIONS });
+  steps.push({ id: "node_role", label: "Node Role", type: "select", options: ROLE_OPTIONS });
 
   return steps;
 }
 
 function displayValue(key: string, value: string): string {
-  if (key === "openrouter_api_key" || key === "agent_secret") return "***";
+  if (key === "openrouter_api_key" || key === "node_secret") return "***";
   if (key === "setup_mode") return value === "import" ? "Import existing" : "Register new";
-  if (key === "inference_type") return value === "local" ? "Local inference" : "OpenRouter";
+  if (key === "inference_type") return value === "self-hosted" ? "Self-hosted inference" : "OpenRouter";
+  if (key === "node_role") return getRoleLabel(value, "onboard");
   return value;
 }
 
@@ -95,9 +104,10 @@ type Phase = "input" | "validating" | "validating_creds" | "fetching_models" | "
 interface OnboardProps {
   onDone: () => void;
   skipToRegistration?: boolean;
+  onCancel?: () => void;
 }
 
-export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
+export default function Onboard({ onDone, skipToRegistration, onCancel }: OnboardProps) {
   const [stepIdx, setStepIdx] = useState(0);
   const [values, setValues] = useState<Record<string, string>>({});
   const [inferenceType, setInferenceType] = useState<InferenceType | undefined>();
@@ -108,51 +118,49 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   const [regError, setRegError] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState("");
-  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const [backFocused, setBackFocused] = useState(false);
 
   const isLoading = phase !== "input";
   const loader = useLoader(isLoading);
 
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
+  const canGoBack = stepIdx > 0;
+
+  function goBack() {
+    if (!canGoBack) return;
+    const prevStep = steps[stepIdx - 1];
+    setValidationError(null);
+    setModelFilter(prevStep.id === "model_name" ? (values["model_name"] ?? "") : "");
+    setBackFocused(false);
+    setStepIdx(stepIdx - 1);
+  }
+
+  useInput((_input, key) => {
+    if (phase !== "input" || !canGoBack) return;
+    // Only handle for TextInput steps — Select steps use "← Back" option
+    if (step?.type === "select") return;
+
+    if (key.downArrow && !backFocused) {
+      setBackFocused(true);
+    }
+    if (key.upArrow && backFocused) {
+      setBackFocused(false);
+    }
+    if (key.return && backFocused) {
+      setBackFocused(false);
+      goBack();
+    }
+  }, { isActive: true });
+
   const isLast = stepIdx === steps.length - 1;
 
   // Autocomplete: filtered models for current query
   const modelQuery = modelFilter.toLowerCase();
-  const filteredModels = step?.id === "llm_model" && modelQuery && availableModels.length > 0
-    ? availableModels.filter((m) => m.toLowerCase().includes(modelQuery))
+  const filteredModels = step?.id === "model_name" && modelQuery && availableModels.length > 0
+    ? availableModels.filter(m => m.toLowerCase().includes(modelQuery.toLowerCase()))
     : [];
-  const isModelAutocomplete = phase === "input" && step?.id === "llm_model" && availableModels.length > 0;
-
-  useInput((input, key) => {
-    if (key.downArrow) {
-      setHighlightIdx((prev) => Math.min(prev + 1, filteredModels.length - 1));
-    } else if (key.upArrow) {
-      setHighlightIdx((prev) => Math.max(prev - 1, -1));
-    } else if (key.return) {
-      if (highlightIdx >= 0 && highlightIdx < filteredModels.length) {
-        advance(filteredModels[highlightIdx]);
-        return;
-      }
-      const val = modelFilter;
-      const exact = availableModels.find((m) => m === val);
-      if (exact) { advance(val); return; }
-      if (filteredModels.length === 1) { advance(filteredModels[0]); return; }
-      if (!val) {
-        setValidationError("Type a model name to search");
-      } else if (filteredModels.length === 0) {
-        setValidationError(`No models matching "${val}"`);
-      } else {
-        setValidationError(`${filteredModels.length} matches — use arrows to select`);
-      }
-    } else if (key.backspace || key.delete) {
-      setModelFilter((prev) => prev.slice(0, -1));
-      setHighlightIdx(-1);
-    } else if (input && !key.ctrl && !key.meta) {
-      setModelFilter((prev) => prev + input);
-      setHighlightIdx(-1);
-    }
-  }, { isActive: isModelAutocomplete });
+  const isModelAutocomplete = phase === "input" && step?.id === "model_name" && availableModels.length > 0;
 
   // Credentials validation (import flow)
   useEffect(() => {
@@ -162,30 +170,31 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     (async () => {
       try {
         const client = new FortyTwoClient();
-        await client.login(values.agent_id, values.agent_secret);
+        await client.login(values.node_id, values.node_secret);
 
         // Fetch display name
-        let displayName = values.agent_id;
+        let displayName = values.node_id;
         try {
           const agent = await client.getAgent();
           displayName = agent?.profile?.display_name || displayName;
-        } catch { /* keep agent_id as name */ }
+        } catch { /* keep node_id as name */ }
 
         if (cancelled) return;
-        setValues((prev) => ({ ...prev, _display_name: displayName }));
+        setValues((prev) => ({ ...prev, _node_display_name: displayName }));
         setValidationError(null);
         setPhase("input");
         setStepIdx(stepIdx + 1);
       } catch (err) {
         if (cancelled) return;
-        // Return to agent_id step so user can fix either field
-        const agentIdIdx = steps.findIndex((s) => s.id === "agent_id");
+        // Return to node_id step so user can fix either field
+        const nodeIdIdx = steps.findIndex((s) => s.id === "node_id");
         setValues((prev) => {
-          const { agent_id: _, agent_secret: __, ...rest } = prev;
+          const { node_id: _, node_secret: __, ...rest } = prev;
           return rest;
         });
-        setStepIdx(agentIdIdx >= 0 ? agentIdIdx : stepIdx);
-        setValidationError(`Invalid credentials: ${err}`);
+        setStepIdx(nodeIdIdx >= 0 ? nodeIdIdx : stepIdx);
+        const msg = err instanceof Error ? err.message : typeof err === "object" && err !== null && "message" in err ? String((err as Record<string, unknown>).message) : String(err);
+        setValidationError(`✕ Invalid credentials: ${msg}`);
         setPhase("input");
       }
     })();
@@ -198,19 +207,20 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     if (phase !== "fetching_models") return;
 
     let cancelled = false;
-    const isLocal = values.inference_type === "local";
-    const baseUrl = isLocal ? values.llm_api_base : "https://openrouter.ai/api/v1";
+    const isLocal = values.inference_type === "self-hosted";
+    const baseUrl = isLocal ? values.self_hosted_api_base : "https://openrouter.ai/api/v1";
     const apiKey = isLocal ? "EMPTY" : values.openrouter_api_key;
 
     fetchModels(baseUrl, apiKey).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
-        setValidationError(result.error ?? "Cannot reach server");
+        setValidationError(`✕ ${result.error ?? "Cannot reach server"}`);
         setPhase("input");
         return;
       }
       setAvailableModels(result.models);
       setValidationError(null);
+      setModelFilter(values["model_name"] ?? "");
       setPhase("input");
       setStepIdx(stepIdx + 1);
     });
@@ -230,7 +240,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
         setPhase("input");
         setStepIdx(stepIdx + 1);
       } else {
-        setValidationError(result.error ?? "Validation failed");
+        setValidationError(`✕ ${result.error ?? "Validation failed"}`);
         setPhase("input");
       }
     });
@@ -247,15 +257,43 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     (async () => {
       try {
         if (!skipToRegistration) {
-          setRegLog(["Saving config..."]);
+          setRegLog(["↳ Saving config..."]);
           const cfg = buildConfig(values);
-          saveConfig(cfg);
+          const profileName = sanitizeProfileName(values.node_name || "default");
+          createProfile(profileName, cfg);
           reloadConfig();
         }
 
         const cfg = getConfig();
+
+        // Show inference info
+        const isLocal = cfg.inference_type === "self-hosted";
+        const finalLines = [
+          `Role: ${cfg.node_role}`,
+          `Inference: ${cfg.inference_type}`,
+          ...(isLocal ? [`Host: ${cfg.self_hosted_api_base}`] : []),
+          `Model: ${cfg.model_name}`,
+          "",
+        ];
+        setRegLog((prev) => [...prev, ...finalLines]);
+
+        // Validate config fields
+        const cfgCheck = validateConfig(cfg as unknown as Record<string, string>);
+        if (cfgCheck.ok) {
+          setRegLog((prev) => [...prev, "Validating model..."]);
+          const modelCheck = await validateModel(cfg as unknown as Record<string, string>);
+          if (!modelCheck.ok) {
+            setRegError(`Config error: ${modelCheck.error}`);
+            return;
+          }
+          setRegLog((prev) => [...prev, "✓ Model validated"]);
+        } else {
+          setRegError(`Config error: ${cfgCheck.error}`);
+          return;
+        }
+
         const client = new FortyTwoClient();
-        const displayName = cfg.display_name || values.agent_name || "JudgeBot";
+        const displayName = cfg.node_display_name || values.node_name || "JudgeNode";
         await registerAgent(client, displayName, (msg) => {
           if (cancelled) return;
           if (msg.startsWith("~")) {
@@ -283,7 +321,7 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
     return () => { cancelled = true; };
   }, [phase === "registering"]);
 
-  // Import existing agent
+  // Import existing node
   useEffect(() => {
     if (phase !== "importing") return;
 
@@ -291,18 +329,17 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
 
     (async () => {
       try {
-        setRegLog(["Saving config..."]);
+        setRegLog(["↳ Saving config..."]);
         const cfg = buildConfig(values);
-        saveConfig(cfg);
+        const profileName = sanitizeProfileName(values._node_display_name || values.node_id || "default");
+        createProfile(profileName, cfg, {
+          node_id: values.node_id,
+          node_secret: values.node_secret,
+        });
         reloadConfig();
 
-        saveIdentity(getConfig().identity_file, {
-          agent_id: values.agent_id,
-          secret: values.agent_secret,
-        });
-
-        const name = values._display_name || values.agent_id;
-        setRegLog((prev) => [...prev, `Agent "${name}" (${values.agent_id}) imported!`]);
+        const name = values._node_display_name || values.node_id;
+        setRegLog((prev) => [...prev, `✓ Node "${name}" (${values.node_id}) imported!`]);
         onDone();
       } catch (err) {
         if (cancelled) return;
@@ -314,7 +351,33 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   }, [phase === "importing"]);
 
   function advance(value: string) {
+    if (value === "__cancel__" && onCancel) {
+      onCancel();
+      return;
+    }
+    if (value === "__back__") {
+      goBack();
+      return;
+    }
     const next = { ...values, [step!.id]: value };
+    const previousValue = values[step!.id];
+
+    // Branch change: clear dependent values when branching select changes
+    if (step!.id === "setup_mode" && previousValue !== undefined && previousValue !== value) {
+      delete next["node_name"];
+      delete next["node_id"];
+      delete next["node_secret"];
+      delete next["_node_display_name"];
+    }
+
+    if (step!.id === "inference_type" && previousValue !== undefined && previousValue !== value) {
+      delete next["openrouter_api_key"];
+      delete next["self_hosted_api_base"];
+      delete next["model_name"];
+      delete next["node_role"];
+      setAvailableModels([]);
+    }
+
     setValues(next);
 
     if (step!.id === "setup_mode") {
@@ -325,19 +388,19 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
       setInferenceType(value as InferenceType);
     }
 
-    if (step!.id === "agent_secret") {
+    if (step!.id === "node_secret") {
       setValidationError(null);
       setPhase("validating_creds");
       return;
     }
 
-    if (step!.id === "llm_api_base" || step!.id === "openrouter_api_key") {
+    if (step!.id === "self_hosted_api_base" || step!.id === "openrouter_api_key") {
       setValidationError(null);
       setPhase("fetching_models");
       return;
     }
 
-    if (step!.id === "llm_model") {
+    if (step!.id === "model_name") {
       setValidationError(null);
       setPhase("validating");
       return;
@@ -355,10 +418,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "validating_creds") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>
-          Setup ({stepIdx + 1}/{steps.length})
+        <Text>
+          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
         </Text>
-        <Text color="yellow">{loader} Checking credentials...</Text>
+        <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking credentials...</Text>
       </Box>
     );
   }
@@ -366,10 +429,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "fetching_models") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>
-          Setup ({stepIdx + 1}/{steps.length})
+        <Text>
+          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
         </Text>
-        <Text color="yellow">{loader} Checking connection and fetching models...</Text>
+        <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking connection and fetching models...</Text>
       </Box>
     );
   }
@@ -377,10 +440,10 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "validating") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>
-          Setup ({stepIdx + 1}/{steps.length})
+        <Text>
+          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
         </Text>
-        <Text color="yellow">{loader} Checking model...</Text>
+        <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking model...</Text>
       </Box>
     );
   }
@@ -388,94 +451,142 @@ export default function Onboard({ onDone, skipToRegistration }: OnboardProps) {
   if (phase === "registering" || phase === "importing") {
     const displayLine = (line: string) => line.replace(/^\[progress]/, "");
     const last = regLog.length - 1;
-    const header = phase === "importing" ? "Import Agent" : "Registration";
+    const header = phase === "importing" ? "IMPORT NODE" : "REGISTRATION";
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Text color={COLOR} bold>{header}</Text>
-        {regLog.length === 0 && <Text color="yellow">{loader} Starting registration...</Text>}
+        <Text bold>▒▓░ {header} ░▓▒</Text>
+        {regLog.length === 0 && <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> ⎔ Registering Node...</Text>}
         <Box flexDirection="column">
           {regLog.map((line, i) => {
             const isCurrent = i === last;
             const text = displayLine(line);
             return (
-              <Text key={i} color={isCurrent ? "yellow" : undefined} dimColor={!isCurrent}>
-                {isCurrent ? `${loader} ` : "  "}{text}
+              <Text key={i} color={isCurrent ? undefined : COLORS.GREY_NEUTRAL}>
+                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "   "}{text}
               </Text>
             );
           })}
         </Box>
-        {regError && <Text color="red">{regError}</Text>}
+        {regError && <Text color={COLORS.RED}>✕ ERROR: {regError}</Text>}
       </Box>
     );
   }
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Text color={COLOR} bold>
-        Setup ({stepIdx + 1}/{steps.length})
+      <Text>
+        STEP {stepIdx + 1}/{steps.length}
       </Text>
 
       {validationError && (
-        <Text color="red">{validationError}</Text>
+        <Text color={COLORS.RED}>{validationError}</Text>
       )}
 
       <Text>
         {step!.label}
-        {step!.placeholder ? <Text dimColor> ({step!.placeholder})</Text> : null}
+        {step!.placeholder ? <Text color={COLORS.GREY_NEUTRAL}> ({step!.placeholder})</Text> : null}
       </Text>
 
       {isModelAutocomplete ? (() => {
         const MAX_SHOWN = 5;
-        const clampedIdx = Math.min(highlightIdx, filteredModels.length - 1);
-        const windowStart = Math.max(0, Math.min(clampedIdx - Math.floor(MAX_SHOWN / 2), filteredModels.length - MAX_SHOWN));
-        const visible = filteredModels.slice(windowStart, windowStart + MAX_SHOWN);
+        const visible = filteredModels.slice(0, MAX_SHOWN);
         return (
           <>
             <Box>
-              <Text>{modelFilter}</Text>
-              <Text inverse> </Text>
+              <Text color={COLORS.BLUE_FRAME} bold>{backFocused ? "  " : "❯ "}</Text>
+              <TextInput
+                key="model_name_autocomplete"
+                isDisabled={backFocused}
+                defaultValue={values[step!.id] ?? ""}
+                placeholder={step!.placeholder ?? ""}
+                suggestions={availableModels}
+                onChange={(val) => {
+                  if (val === modelFilter) return;
+                  setModelFilter(val);
+                  setValidationError(null);
+                }}
+                onSubmit={(val) => {
+                  const exact = availableModels.find((m) => m === val);
+                  if (exact) { advance(val); return; }
+                  const query = val.toLowerCase();
+                  const matches = query ? availableModels.filter((m) => m.toLowerCase().includes(query)) : [];
+                  if (matches.length === 1) { advance(matches[0]); return; }
+                  if (!val) {
+                    setValidationError("Type a model name to search");
+                  } else if (matches.length === 0) {
+                    setValidationError(`No models matching "${val}"`);
+                  } else {
+                    setValidationError(`${matches.length} matches — narrow your search`);
+                  }
+                }}
+              />
             </Box>
             {modelQuery && filteredModels.length > 0 && (
               <Box flexDirection="column">
-                {windowStart > 0 && <Text dimColor>  ↑ more</Text>}
-                {visible.map((m, i) => {
-                  const realIdx = windowStart + i;
-                  const selected = realIdx === clampedIdx;
-                  return (
-                    <Text key={m} color={selected ? "cyan" : undefined} dimColor={!selected}>
-                      {selected ? "▸ " : "  "}{m}
-                    </Text>
-                  );
-                })}
-                {windowStart + MAX_SHOWN < filteredModels.length && (
-                  <Text dimColor>  ↓ +{filteredModels.length - windowStart - MAX_SHOWN} more</Text>
+                {visible.map((m) => (
+                  <Text key={m} color={COLORS.GREY_NEUTRAL}>  {m}</Text>
+                ))}
+                {filteredModels.length > MAX_SHOWN && (
+                  <Text color={COLORS.GREY_NEUTRAL}>  +{filteredModels.length - MAX_SHOWN} more</Text>
                 )}
               </Box>
             )}
             {modelQuery && filteredModels.length === 0 && (
-              <Text dimColor>No matches</Text>
+              <Text color={COLORS.GREY_NEUTRAL}>No matches</Text>
             )}
             {!modelQuery && (
-              <Text dimColor>{availableModels.length} models available — type to search</Text>
+              <Text color={COLORS.GREY_NEUTRAL}>{availableModels.length} models available — type to search</Text>
+            )}
+            {canGoBack && (
+              <Text color={backFocused ? COLORS.BLUE_CONTENT : COLORS.GREY_NEUTRAL}>
+                {backFocused ? "❯" : " "} ← Back
+              </Text>
             )}
           </>
         );
       })() : step!.type === "select" && step!.options ? (
-        <Select key={step!.id} options={step!.options} onChange={(val) => advance(val)} />
+        <ThemeProvider theme={selectTheme}>
+          <Select
+            key={`${step!.id}-${stepIdx}`}
+            options={(() => {
+              const savedValue = values[step!.id];
+              const base = step!.options!;
+              const ordered = savedValue
+                ? [...base.filter(o => o.value === savedValue), ...base.filter(o => o.value !== savedValue)]
+                : base;
+              if (canGoBack) return [...ordered, { label: "Back", value: "__back__" }];
+              if (onCancel && stepIdx === 0) return [...ordered, { label: "Back", value: "__cancel__" }];
+              return ordered;
+            })()}
+            onChange={(val) => advance(val)}
+          />
+        </ThemeProvider>
       ) : (
-        <TextInput
-          key={step!.id}
-          placeholder={step!.placeholder ?? ""}
-          onSubmit={(val) => advance(val)}
-        />
+        <>
+          <Box>
+            <Text color={COLORS.BLUE_FRAME} bold>{backFocused ? "  " : "❯ "}</Text>
+            <TextInput
+              key={step!.id}
+              isDisabled={backFocused}
+              defaultValue={values[step!.id] ?? ""}
+              placeholder={step!.placeholder ?? ""}
+              onSubmit={(val) => advance(val)}
+            />
+          </Box>
+          {canGoBack && (
+            <Text color={backFocused ? COLORS.BLUE_CONTENT : COLORS.GREY_NEUTRAL}>
+              {backFocused ? "❯" : " "} ← Back
+            </Text>
+          )}
+        </>
       )}
 
       {Object.keys(values).length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>─── configured ───</Text>
+          <Text color={COLORS.GREY_NEUTRAL}>─── configured ───</Text>
           {Object.entries(values).map(([k, v]) => (
-            <Text key={k} dimColor>
+            <Text key={k} color={COLORS.GREY_NEUTRAL}>
               {k}: {displayValue(k, v)}
             </Text>
           ))}

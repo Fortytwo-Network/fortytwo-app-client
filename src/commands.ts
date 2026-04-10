@@ -1,11 +1,15 @@
-import { get as getConfig, saveConfig, reloadConfig, type UserConfig } from "./config.js";
+import { get as getConfig, saveConfig, reloadConfig } from "./config.js";
 import { loadIdentity } from "./identity.js";
 import { setVerbose } from "./utils.js";
 import { resetLlmClient } from "./llm.js";
+import { validateConfig } from "./setup-logic.js";
+import { listProfiles, switchProfile } from "./profiles.js";
+import { getCachedUpdate, UPDATE_COMMAND } from "./update-check.js";
+import pkg from "../package.json" with { type: "json" };
 
 const LLM_RESET_KEYS = new Set([
-  "llm_model", "openrouter_api_key", "inference_type",
-  "llm_api_base", "llm_timeout", "llm_concurrency",
+  "model_name", "openrouter_api_key", "inference_type",
+  "self_hosted_api_base", "llm_timeout", "llm_concurrency",
 ]);
 
 const MASKED_KEYS = new Set(["openrouter_api_key"]);
@@ -22,20 +26,25 @@ function mask(key: string, value: string): string {
 }
 
 const CONFIG_KEYS = [
-  "agent_name", "display_name", "inference_type", "openrouter_api_key",
-  "llm_api_base", "fortytwo_api_base", "identity_file", "poll_interval",
-  "llm_model", "llm_concurrency", "llm_timeout", "min_balance",
-  "bot_role", "answerer_system_prompt",
+  "node_name", "node_display_name", "inference_type", "openrouter_api_key",
+  "self_hosted_api_base", "fortytwo_api_base", "node_identity_file", "poll_interval",
+  "model_name", "llm_concurrency", "llm_timeout", "min_balance",
+  "node_role", "answerer_system_prompt",
 ];
 
 export const SUGGESTIONS = [
   "/help",
   "/ask ",
   "/identity",
+  "/profile",
+  "/profile list",
+  "/profile create",
+  "/profile switch ",
   "/config show",
   ...CONFIG_KEYS.map((k) => `/config set ${k} `),
   "/verbose on",
   "/verbose off",
+  "/version",
   "/exit",
 ];
 
@@ -52,12 +61,16 @@ export function executeCommand(input: string): string[] {
   if (cmd === "help") {
     return [
       "Commands:",
-      "  /ask <question>    — submit a question to the network",
-      "  /identity          — show agent_id and secret",
-      "  /config show       — show all config values",
-      "  /config set <k> <v> — change a config value",
-      "  /verbose on|off    — toggle verbose logging",
-      "  /exit              — quit the application",
+      "  /ask <question>        — submit a question to the network",
+      "  /identity              — show node_id and node_secret",
+      "  /profile list          — list all profiles",
+      "  /profile create        — create a new profile",
+      "  /profile switch <name> — switch active profile",
+      "  /config show           — show all config values",
+      "  /config set <k> <v>    — change a config value",
+      "  /verbose on|off        — toggle verbose logging",
+      "  /version               — show version and check for updates",
+      "  /exit                  — quit the application",
     ];
   }
 
@@ -67,12 +80,12 @@ export function executeCommand(input: string): string[] {
 
   if (cmd === "identity") {
     const cfg = getConfig();
-    const id = loadIdentity(cfg.identity_file);
+    const id = loadIdentity(cfg.node_identity_file);
     if (!id) return ["No identity found."];
     return [
       "Identity:",
-      `  agent_id: ${id.agent_id}`,
-      `  secret:   ${id.secret}`,
+      `  node_id: ${id.node_id}`,
+      `  node_secret:   ${id.node_secret}`,
     ];
   }
 
@@ -114,10 +127,72 @@ export function executeCommand(input: string): string[] {
 
       if (LLM_RESET_KEYS.has(key)) resetLlmClient();
 
-      return [`${key} = ${mask(key, String(value))}`];
+      const result: string[] = [`${key} = ${mask(key, String(value))}`];
+
+      const check = validateConfig(updated as unknown as Record<string, string>);
+      if (!check.ok) {
+        result.push(`⚠ ${check.error}`);
+      }
+
+      return result;
     }
 
     return [`Usage: /config show | /config set <key> <value>`];
+  }
+
+  if (cmd === "profile") {
+    const sub = parts[1]?.toLowerCase();
+
+    if (!sub || sub === "list") {
+      const profiles = listProfiles();
+      if (profiles.length === 0) return ["No profiles configured."];
+      const lines: string[] = ["Profiles:"];
+      for (const p of profiles) {
+        const marker = p.active ? " (active)" : "";
+        lines.push(`  ${p.name}${marker}`);
+      }
+      return lines;
+    }
+
+    if (sub === "create") {
+      return ["__CREATE_PROFILE__", "Starting profile creation..."];
+    }
+
+    if (sub === "switch") {
+      const name = parts[2];
+      if (!name) {
+        const profiles = listProfiles();
+        const lines = ["Usage: /profile switch <name>", "", "Available profiles:"];
+        for (const p of profiles) {
+          lines.push(`  ${p.name}${p.active ? " (active)" : ""}`);
+        }
+        return lines;
+      }
+      try {
+        switchProfile(name);
+        resetLlmClient();
+        return [`__SWITCH_PROFILE__:${name}`, `Switched to profile "${name}". Restarting...`];
+      } catch (err) {
+        return [String(err instanceof Error ? err.message : err)];
+      }
+    }
+
+    return [
+      "Profile commands:",
+      "  /profile list           — list all profiles",
+      "  /profile create         — create a new profile",
+      "  /profile switch <name>  — switch active profile",
+    ];
+  }
+
+  if (cmd === "version") {
+    const lines = [`Fortytwo Client v${pkg.version}`];
+    const info = getCachedUpdate();
+    if (info?.updateAvailable) {
+      lines.push(`Update available: v${info.latestVersion}`);
+      lines.push(`Run: ${UPDATE_COMMAND}`);
+    }
+    return lines;
   }
 
   return [`Unknown command: ${cmd}. Type "/help".`];
