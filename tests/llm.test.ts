@@ -48,7 +48,6 @@ vi.mock("../src/config.js", () => ({
 
 import {
   callLlm,
-  compareForRegistration,
   evaluateGoodEnough,
   comparePairwise,
   generateAnswer,
@@ -87,34 +86,6 @@ describe("llm", () => {
       const call = mockCreate.mock.calls[0];
       expect(call[0].model).toBe("test-model");
       expect(call[0].messages[0].content).toBe("Say hello");
-    });
-  });
-
-  describe("compareForRegistration", () => {
-    it("returns 1 when LLM says A", async () => {
-      mockResponse("After analysis, solution A is better.\nA");
-      expect(await compareForRegistration("q", "a", "b")).toBe(1);
-    });
-
-    it("returns -1 when LLM says B", async () => {
-      mockResponse("B is clearly better\nB");
-      expect(await compareForRegistration("q", "a", "b")).toBe(-1);
-    });
-
-    it("returns 0 when LLM says U", async () => {
-      mockResponse("Cannot determine\nU");
-      expect(await compareForRegistration("q", "a", "b")).toBe(0);
-    });
-
-    it("returns 0 on LLM failure", async () => {
-      mockCreate.mockRejectedValue(new Error("network error"));
-      expect(await compareForRegistration("q", "a", "b")).toBe(0);
-    });
-
-    it("returns 0 after 2 unparseable attempts", async () => {
-      mockResponse("I cannot decide clearly...");
-      expect(await compareForRegistration("q", "a", "b")).toBe(0);
-      expect(mockCreate).toHaveBeenCalledTimes(2);
     });
   });
 

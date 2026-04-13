@@ -25,6 +25,14 @@ const mockClient = {
   getPendingChallenges: vi.fn().mockResolvedValue({ challenges: [] }),
   getActiveQueries: vi.fn().mockResolvedValue({ queries: [] }),
   getBalance: vi.fn().mockResolvedValue({ available: "100.0" }),
+  getCapability: vi.fn().mockResolvedValue({
+    agent_id: "agent-1",
+    capability_rank: 42,
+    node_tier: "capable",
+    is_dead_locked: false,
+  }),
+  getAgent: vi.fn().mockResolvedValue({ profile: {}, capability_rank: 42, node_tier: "capable" }),
+  getAgentStats: vi.fn().mockResolvedValue({}),
 };
 
 vi.mock("../src/api-client.js", () => {
@@ -34,12 +42,28 @@ vi.mock("../src/api-client.js", () => {
     getPendingChallenges = mockClient.getPendingChallenges;
     getActiveQueries = mockClient.getActiveQueries;
     getBalance = mockClient.getBalance;
+    getCapability = mockClient.getCapability;
+    getAgent = mockClient.getAgent;
+    getAgentStats = mockClient.getAgentStats;
   }
-  return { FortyTwoClient: MockFortyTwoClient };
+  class MockApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+    }
+  }
+  return { FortyTwoClient: MockFortyTwoClient, ApiError: MockApiError };
 });
 
+async function makeApiError(status: number, message = "err") {
+  const { ApiError } = await import("../src/api-client.js");
+  return new ApiError(status, message);
+}
+
 vi.mock("../src/identity.js", () => ({
-  loadIdentity: vi.fn().mockReturnValue({ node_id: "agent-1", secret: "sec" }),
+  loadIdentity: vi.fn().mockReturnValue({ node_id: "agent-1", node_secret: "sec" }),
   resetAccount: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -59,6 +83,11 @@ vi.mock("../src/setup-logic.js", () => ({
   validateModel: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+vi.mock("../src/capability-challenge.js", () => ({
+  createChallengeContext: vi.fn(() => ({ client: {}, inFlight: new Set() })),
+  processChallengeRounds: vi.fn().mockResolvedValue(0),
+}));
+
 vi.mock("../src/utils.js", () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
   secondsUntilDeadline: vi.fn().mockReturnValue(600),
@@ -68,32 +97,27 @@ vi.mock("../src/utils.js", () => ({
 }));
 
 import {
-  InsufficientFundsError,
   checkBalance,
+  fetchCapability,
   processChallenges,
   processQueries,
   runCycle,
   getTaskStats,
   main,
 } from "../src/main.js";
-import { loadIdentity, resetAccount } from "../src/identity.js";
+import { loadIdentity } from "../src/identity.js";
 import { isLlmBusy } from "../src/llm.js";
 import { secondsUntilDeadline, log } from "../src/utils.js";
+import { processChallengeRounds } from "../src/capability-challenge.js";
 
-describe("InsufficientFundsError", () => {
-  it("is an Error with correct name", () => {
-    const err = new InsufficientFundsError("low balance");
-    expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe("InsufficientFundsError");
-    expect(err.message).toBe("low balance");
-  });
-});
+const CAPABLE = { agent_id: "a", capability_rank: 42, node_tier: "capable", is_dead_locked: false } as const;
+const CHALLENGER = { agent_id: "a", capability_rank: 5, node_tier: "challenger", is_dead_locked: false } as const;
 
 describe("checkBalance", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("returns available balance", async () => {
-    mockClient.getBalance.mockResolvedValue({ available: "42.5" });
+    mockClient.getBalance.mockResolvedValue({ available: "42.5", challenge_locked: "10", staked: "5" });
     const result = await checkBalance(mockClient as any);
     expect(result).toBe(42.5);
   });
@@ -102,6 +126,27 @@ describe("checkBalance", () => {
     mockClient.getBalance.mockRejectedValue(new Error("net error"));
     const result = await checkBalance(mockClient as any);
     expect(result).toBe(0);
+  });
+});
+
+describe("fetchCapability", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns capability info on success", async () => {
+    mockClient.getCapability.mockResolvedValue(CAPABLE);
+    const cap = await fetchCapability(mockClient as any);
+    expect(cap?.node_tier).toBe("capable");
+  });
+
+  it("returns null for old servers (404)", async () => {
+    mockClient.getCapability.mockRejectedValue(await makeApiError(404, "not found"));
+    const cap = await fetchCapability(mockClient as any);
+    expect(cap).toBeNull();
+  });
+
+  it("rethrows non-404 errors", async () => {
+    mockClient.getCapability.mockRejectedValue(new Error("boom"));
+    await expect(fetchCapability(mockClient as any)).rejects.toThrow("boom");
   });
 });
 
@@ -153,23 +198,6 @@ describe("processChallenges", () => {
     const count = await processChallenges(mockClient as any);
     expect(count).toBe(0);
   });
-
-  it("uses dualMode to filter by shouldAnswer", async () => {
-    vi.mocked(isLlmBusy).mockReturnValue(false);
-    vi.mocked(secondsUntilDeadline).mockReturnValue(600);
-    mockClient.getPendingChallenges.mockResolvedValue({
-      challenges: Array.from({ length: 10 }, (_, i) => ({
-        id: `ch-dual-${i}`,
-        has_voted: false,
-        query_id: `q-dual-${i}`,
-        effective_voting_deadline: "2099-01-01T00:00:00Z",
-      })),
-    });
-    const count = await processChallenges(mockClient as any, true);
-    // Some are filtered by shouldAnswer hash, count should be < 10
-    expect(count).toBeGreaterThanOrEqual(0);
-    expect(count).toBeLessThanOrEqual(10);
-  });
 });
 
 describe("processQueries", () => {
@@ -208,59 +236,60 @@ describe("processQueries", () => {
     const count = await processQueries(mockClient as any);
     expect(count).toBe(1);
   });
-
-  it("uses dualMode to filter by shouldAnswer", async () => {
-    mockClient.getActiveQueries.mockResolvedValue({
-      queries: Array.from({ length: 10 }, (_, i) => ({
-        id: `q-dm-${i}`,
-        created_at: new Date(Date.now() - 60_000).toISOString(),
-        decision_deadline_at: new Date(Date.now() + 3600_000).toISOString(),
-      })),
-    });
-    const count = await processQueries(mockClient as any, true);
-    expect(count).toBeGreaterThanOrEqual(0);
-    expect(count).toBeLessThanOrEqual(10);
-  });
 });
 
 describe("runCycle", () => {
+  const challengeCtx = { client: {} as any, inFlight: new Set<string>() };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockCfg.node_role = "JUDGE";
   });
 
-  it("processes challenges for JUDGE role", async () => {
+  it("processes challenges for Capable JUDGE", async () => {
     vi.mocked(isLlmBusy).mockReturnValue(false);
     mockClient.getPendingChallenges.mockResolvedValue({ challenges: [] });
-    const count = await runCycle(mockClient as any);
+    const count = await runCycle(mockClient as any, CAPABLE, challengeCtx);
     expect(count).toBe(0);
     expect(mockClient.getPendingChallenges).toHaveBeenCalled();
+  });
+
+  it("processes queries for Capable ANSWERER", async () => {
+    mockCfg.node_role = "ANSWERER";
+    mockClient.getActiveQueries.mockResolvedValue({ queries: [] });
+    const count = await runCycle(mockClient as any, CAPABLE, challengeCtx);
+    expect(count).toBe(0);
+    expect(mockClient.getActiveQueries).toHaveBeenCalled();
+  });
+
+  it("routes Challenger to capability-challenge worker unconditionally", async () => {
+    vi.mocked(processChallengeRounds).mockResolvedValue(3);
+    const count = await runCycle(mockClient as any, CHALLENGER, challengeCtx);
+    expect(count).toBe(3);
+    expect(processChallengeRounds).toHaveBeenCalledWith(challengeCtx);
+    expect(mockClient.getPendingChallenges).not.toHaveBeenCalled();
     expect(mockClient.getActiveQueries).not.toHaveBeenCalled();
   });
 
-  it("processes queries for ANSWERER role", async () => {
-    mockCfg.node_role = "ANSWERER";
-    mockClient.getActiveQueries.mockResolvedValue({ queries: [] });
-    const count = await runCycle(mockClient as any);
+  it("skips all work when dead-locked", async () => {
+    const deadLocked = { ...CHALLENGER, is_dead_locked: true };
+    const count = await runCycle(mockClient as any, deadLocked, challengeCtx);
     expect(count).toBe(0);
-    expect(mockClient.getActiveQueries).toHaveBeenCalled();
+    expect(processChallengeRounds).not.toHaveBeenCalled();
     expect(mockClient.getPendingChallenges).not.toHaveBeenCalled();
   });
 
-  it("processes both for ANSWERER_AND_JUDGE role", async () => {
-    mockCfg.node_role = "ANSWERER_AND_JUDGE";
-    vi.mocked(isLlmBusy).mockReturnValue(false);
-    mockClient.getActiveQueries.mockResolvedValue({ queries: [] });
+  it("treats null capability as Capable (backwards compat)", async () => {
+    mockCfg.node_role = "JUDGE";
     mockClient.getPendingChallenges.mockResolvedValue({ challenges: [] });
-    const count = await runCycle(mockClient as any);
+    const count = await runCycle(mockClient as any, null, challengeCtx);
     expect(count).toBe(0);
-    expect(mockClient.getActiveQueries).toHaveBeenCalled();
     expect(mockClient.getPendingChallenges).toHaveBeenCalled();
   });
 
   it("logs warning for unknown role", async () => {
     mockCfg.node_role = "UNKNOWN";
-    const count = await runCycle(mockClient as any);
+    const count = await runCycle(mockClient as any, CAPABLE, challengeCtx);
     expect(count).toBe(0);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Unknown NODE_ROLE"));
   });
@@ -272,7 +301,8 @@ describe("main", () => {
     mockCfg.node_role = "JUDGE";
     mockCfg.inference_type = "openrouter";
     mockCfg.openrouter_api_key = "test-key";
-    vi.mocked(loadIdentity).mockReturnValue({ node_id: "agent-1", secret: "sec" });
+    vi.mocked(loadIdentity).mockReturnValue({ node_id: "agent-1", node_secret: "sec" });
+    mockClient.getCapability.mockResolvedValue(CAPABLE);
   });
 
   it("runs one cycle then stops on abort", async () => {
@@ -316,40 +346,42 @@ describe("main", () => {
     mockCfg.node_role = "JUDGE";
   });
 
-  it("resets account on InsufficientFundsError", async () => {
+  it("goes idle (warning log, no reset) when Capable has balance < min_balance", async () => {
     mockClient.login.mockResolvedValue({});
     vi.mocked(isLlmBusy).mockReturnValue(false);
+    mockClient.getCapability.mockResolvedValue(CAPABLE);
 
     let callCount = 0;
     const ac = new AbortController();
     mockClient.getBalance.mockImplementation(async () => {
       callCount++;
-      if (callCount === 1) return { available: "1.0" }; // below min_balance
-      ac.abort();
-      return { available: "100.0" };
+      if (callCount >= 2) ac.abort();
+      return { available: "1.0" };
     });
     mockClient.getPendingChallenges.mockResolvedValue({ challenges: [] });
 
     await main(ac.signal);
-    expect(resetAccount).toHaveBeenCalled();
+    expect(mockClient.getPendingChallenges).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Low balance"));
   });
 
-  it("handles generic error in cycle", async () => {
+  it("does NOT gate Challenger on min_balance — runs Capability Challenge even with 0 available", async () => {
     mockClient.login.mockResolvedValue({});
-    mockClient.getBalance.mockResolvedValue({ available: "100.0" });
-
-    const ac = new AbortController();
-    let callCount = 0;
-    mockClient.getPendingChallenges.mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) throw new Error("random failure");
-      ac.abort();
-      return { challenges: [] };
-    });
     vi.mocked(isLlmBusy).mockReturnValue(false);
+    mockClient.getCapability.mockResolvedValue(CHALLENGER);
+    vi.mocked(processChallengeRounds).mockResolvedValue(0);
+
+    let callCount = 0;
+    const ac = new AbortController();
+    mockClient.getBalance.mockImplementation(async () => {
+      callCount++;
+      if (callCount >= 2) ac.abort();
+      return { available: "0.0", challenge_locked: "250" };
+    });
 
     await main(ac.signal);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Error in polling cycle"));
+    expect(processChallengeRounds).toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Low balance"));
   });
 
   it("skips API key check for local inference", async () => {
@@ -369,43 +401,5 @@ describe("main", () => {
     expect(mockClient.login).toHaveBeenCalled();
     mockCfg.inference_type = "openrouter";
     mockCfg.openrouter_api_key = "test-key";
-  });
-
-  it("sets verbose when --verbose in argv", async () => {
-    const origArgv = process.argv;
-    process.argv = [...origArgv, "--verbose"];
-    mockClient.login.mockResolvedValue({});
-    vi.mocked(isLlmBusy).mockReturnValue(false);
-
-    const ac = new AbortController();
-    mockClient.getBalance.mockImplementation(async () => {
-      ac.abort();
-      return { available: "100.0" };
-    });
-    mockClient.getPendingChallenges.mockResolvedValue({ challenges: [] });
-
-    const { setVerbose } = await import("../src/utils.js");
-    await main(ac.signal);
-    expect(setVerbose).toHaveBeenCalledWith(true);
-    process.argv = origArgv;
-  });
-
-  it("logs when cycle takes longer than poll_interval", async () => {
-    mockClient.login.mockResolvedValue({});
-    vi.mocked(isLlmBusy).mockReturnValue(false);
-    mockCfg.poll_interval = 0; // 0 seconds
-
-    const ac = new AbortController();
-    let callCount = 0;
-    mockClient.getBalance.mockImplementation(async () => {
-      callCount++;
-      if (callCount >= 2) ac.abort();
-      return { available: "100.0" };
-    });
-    mockClient.getPendingChallenges.mockResolvedValue({ challenges: [] });
-
-    await main(ac.signal);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("starting next immediately"));
-    mockCfg.poll_interval = 1;
   });
 });

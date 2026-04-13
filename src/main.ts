@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
 import * as config from "./config.js";
 import { sleep, secondsUntilDeadline, setVerbose, log, getRoleLabel } from "./utils.js";
-import { FortyTwoClient } from "./api-client.js";
-import { loadIdentity, resetAccount, reactivateAccount } from "./identity.js";
+import { FortyTwoClient, ApiError } from "./api-client.js";
+import { loadIdentity } from "./identity.js";
 import { judgeChallenge } from "./judging.js";
 import { answerQuery } from "./answering.js";
 import { isLlmBusy } from "./llm.js";
 import { validateModel } from "./setup-logic.js";
 import { viewerBus, type VisibleQuery } from "./event-bus.js";
+import {
+  createChallengeContext,
+  processChallengeRounds,
+  type ChallengeContext,
+} from "./capability-challenge.js";
+import type { CapabilityInfo } from "./api-types.js";
 
 /** Initialize viewer dashboard config and load initial stats from API. */
 export async function initViewerBus(
@@ -51,15 +57,15 @@ export async function initViewerBus(
         intelligenceNormalized: String(p.intelligence_normalized ?? "0"),
         judgingNormalized: String(p.judging_normalized ?? "0"),
       });
+      if (agentData.capability_rank !== undefined && agentData.node_tier) {
+        viewerBus.setCapability(
+          Number(agentData.capability_rank),
+          agentData.node_tier,
+          false,
+        );
+      }
     }
   } catch { /* stats are optional — don't block startup */ }
-}
-
-export class InsufficientFundsError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "InsufficientFundsError";
-  }
 }
 
 function shouldAnswer(queryId: string, nodeId: string): boolean {
@@ -84,6 +90,7 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
   try {
     const balanceData = await client.getBalance();
     const available = parseFloat(balanceData.available ?? "0");
+    const challengeLocked = parseFloat(balanceData.challenge_locked ?? "0");
     const staked = parseFloat(balanceData.staked ?? "0");
     const total = parseFloat(balanceData.total ?? "0");
     const weekEarned = parseFloat(balanceData.current_week_earned ?? "0");
@@ -91,6 +98,7 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
     const lifetimeSpent = parseFloat(balanceData.lifetime_spent ?? "0");
     viewerBus.updateStats({
       energy: available,
+      challengeLocked,
       staked,
       total,
       weekEarned,
@@ -105,23 +113,38 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
   }
 }
 
+/**
+ * Fetch the agent's current capability state. Falls back to a "capable" view
+ * when the server predates TZ-001 (404 on /capability/{id}).
+ */
+export async function fetchCapability(client: FortyTwoClient): Promise<CapabilityInfo | null> {
+  try {
+    const cap = await client.getCapability();
+    viewerBus.setCapability(cap.capability_rank, cap.node_tier, cap.is_dead_locked);
+    return cap;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      // Old server — treat as capable with unknown rank.
+      return null;
+    }
+    throw err;
+  }
+}
+
 // Track in-flight task IDs to avoid duplicates across cycles
 const inFlight = new Set<string>();
 
-const taskStats = { answering: 0, judging: 0 };
+const taskStats = { answering: 0, judging: 0, challenge: 0 };
 
 export function getTaskStats() {
   return { ...taskStats };
 }
 
-function launchTask(id: string, label: string, fn: () => Promise<void>): void {
+function launchTask(id: string, label: "answering" | "judging", fn: () => Promise<void>): void {
   if (inFlight.has(id)) return;
   inFlight.add(id);
   fn()
-    .then(() => {
-      if (label === "answering") taskStats.answering++;
-      else if (label === "judging") taskStats.judging++;
-    })
+    .then(() => { taskStats[label]++; })
     .catch((err) => log(`[${id.slice(0, 8)}] ${label[0].toUpperCase()}${label.slice(1)} failed: ${(err as Error).message ?? err}`))
     .finally(() => inFlight.delete(id));
 }
@@ -221,11 +244,35 @@ export async function processQueries(client: FortyTwoClient, dualMode = false): 
   return eligible.length;
 }
 
-export async function runCycle(client: FortyTwoClient): Promise<number> {
+/**
+ * Run one iteration of the worker loop. Dispatches based on `capability`:
+ * - Capable (rank = 42): process queries and/or challenges by role.
+ * - Challenger (rank < 42): participate in Capability Challenge rounds.
+ * - Dead-locked: log a warning, skip all work (manual reset required).
+ */
+export async function runCycle(
+  client: FortyTwoClient,
+  capability: CapabilityInfo | null,
+  challengeCtx: ChallengeContext,
+): Promise<number> {
   const cfg = config.get();
   const role = cfg.node_role;
-  let total = 0;
 
+  if (capability?.is_dead_locked) {
+    log("Dead lock — no FOR available. Run 'fortytwo reset' to unlock.");
+    viewerBus.pushError("Dead lock: no FOR available. Reset required.");
+    return 0;
+  }
+
+  // Challenger: participate in Capability Challenge rounds. ELO is frozen, so
+  // we do not run the normal answer/judge loops for Challengers — reaching
+  // rank 42 requires solving puzzles.
+  if (capability?.node_tier === "challenger") {
+    return await processChallengeRounds(challengeCtx);
+  }
+
+  // Capable (or old server without capability endpoint): normal flow.
+  let total = 0;
   if (role === "JUDGE") {
     total += await processChallenges(client, false);
   } else if (role === "ANSWERER") {
@@ -239,7 +286,6 @@ export async function runCycle(client: FortyTwoClient): Promise<number> {
   } else {
     log(`Unknown NODE_ROLE: ${role}`);
   }
-
   return total;
 }
 
@@ -288,41 +334,34 @@ export async function main(signal?: AbortSignal): Promise<void> {
     await client.login(identity.node_id, identity.node_secret);
     await initViewerBus(client, cfg, identity.node_id);
 
+    const challengeCtx = createChallengeContext(client);
+
     log(`✓ Starting polling loop (interval: ${cfg.poll_interval}s)`);
     let cycles = 0;
     while (!signal?.aborted) {
       const cycleStart = Date.now();
       try {
         const available = await checkBalance(client);
-        if (available < cfg.min_balance) {
-          throw new InsufficientFundsError(
-            `Insufficient FOR balance: ${available.toFixed(2)} available, ${cfg.min_balance.toFixed(2)} required`,
-          );
-        }
+        const capability = await fetchCapability(client);
 
-        const count = await runCycle(client);
-        cycles++;
-        viewerBus.updateStats({ cycles });
-        if (count > 0) log(`Processed ${count} items this cycle`);
+        // `min_balance` gates Capable nodes (they spend `available` FOR to stake
+        // on queries/judgments). Challengers are funded from `challenge_locked`
+        // instead, so a zero `available` balance is expected and must not block
+        // their Capability Challenge participation.
+        const isCapable = capability === null || capability.node_tier === "capable";
+        if (isCapable && available < cfg.min_balance) {
+          const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
+          log(msg);
+          viewerBus.pushError(msg);
+        } else {
+          const count = await runCycle(client, capability, challengeCtx);
+          cycles++;
+          viewerBus.updateStats({ cycles });
+          if (count > 0) log(`Processed ${count} items this cycle`);
+        }
       } catch (err) {
         if (signal?.aborted) return;
-        if (err instanceof InsufficientFundsError) {
-          log(`${err.message} — resetting account...`);
-          viewerBus.pushError(err.message);
-          await resetAccount(client);
-          log("Account reset complete!");
-          continue;
-        }
         const errMsg = (err as Error).message ?? String(err);
-        if (errMsg.toLowerCase().includes("inactive") || errMsg.toLowerCase().includes("deactivated")) {
-          log(`Account deactivated — reactivating...`);
-          viewerBus.updateStats({ accountInactive: true });
-          await reactivateAccount(client, identity.node_id, identity.node_secret);
-          await client.login(identity.node_id, identity.node_secret);
-          viewerBus.updateStats({ accountInactive: false });
-          log("Reactivation complete!");
-          continue;
-        }
         log(`Error in polling cycle: ${errMsg}`);
         viewerBus.pushError(errMsg);
       }

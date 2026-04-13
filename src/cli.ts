@@ -7,8 +7,8 @@ import {
   get as getConfig,
   reloadConfig,
 } from "./config.js";
-import { loadIdentity, registerAgent } from "./identity.js";
-import { FortyTwoClient } from "./api-client.js";
+import { loadIdentity, registerAgent, resetAccount } from "./identity.js";
+import { FortyTwoClient, ApiError } from "./api-client.js";
 import { main } from "./main.js";
 import { executeCommand } from "./commands.js";
 import { validateModel, buildConfig } from "./setup-logic.js";
@@ -230,6 +230,22 @@ async function cmdRun() {
   await main(ac.signal);
 }
 
+async function loadClient(): Promise<{ client: FortyTwoClient; nodeId: string }> {
+  if (!configExists()) {
+    console.error("No config found. Run 'setup' or 'import' first.");
+    process.exit(1);
+  }
+  const cfg = getConfig();
+  const identity = loadIdentity(cfg.node_identity_file);
+  if (!identity) {
+    console.error("No identity found. Run 'setup' or 'import' first.");
+    process.exit(1);
+  }
+  const client = new FortyTwoClient();
+  await client.login(identity.node_id, identity.node_secret);
+  return { client, nodeId: identity.node_id };
+}
+
 async function cmdAsk(positionals: string[]) {
   const question = positionals.join(" ").trim();
   if (!question) {
@@ -237,24 +253,120 @@ async function cmdAsk(positionals: string[]) {
     process.exit(1);
   }
 
-  if (!configExists()) {
-    console.error("No config found. Run 'setup' or 'import' first.");
-    process.exit(1);
-  }
+  const { client, nodeId } = await loadClient();
 
-  const cfg = getConfig();
-  const identity = loadIdentity(cfg.node_identity_file);
-  if (!identity) {
-    console.error("No identity found. Run 'setup' or 'import' first.");
-    process.exit(1);
+  // Pre-check: Challenger nodes cannot create queries.
+  try {
+    const cap = await client.getCapability(nodeId);
+    if (cap.node_tier !== "capable") {
+      console.error(
+        `You are still a Challenger (rank ${cap.capability_rank}/42). ` +
+          `Reach Capability 42 by answering challenges first.`,
+      );
+      process.exit(1);
+      return;
+    }
+  } catch (err) {
+    // Old server (404) — fall through to createQuery which will succeed under old rules.
+    if (!(err instanceof ApiError && err.status === 404)) throw err;
   }
-
-  const client = new FortyTwoClient();
-  await client.login(identity.node_id, identity.node_secret);
 
   const encrypted = Buffer.from(question, "utf-8").toString("base64");
-  const res = await client.createQuery(encrypted, "general");
-  console.log(`Question submitted! ID: ${res.id ?? "?"}`);
+  try {
+    const res = await client.createQuery(encrypted, "general");
+    console.log(`Question submitted! ID: ${res.id ?? "?"}`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 403) {
+      console.error(
+        "You are still a Challenger. Reach Capability 42 by answering challenges first.",
+      );
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+async function cmdCapability(positionals: string[]) {
+  const sub = positionals[0];
+  const { client, nodeId } = await loadClient();
+
+  if (sub === "history") {
+    const history = await client.getCapabilityHistory(nodeId, 1, 20);
+    if (history.items.length === 0) {
+      console.log("No capability changes recorded.");
+      return;
+    }
+    console.log(`Capability history (${history.total} total):`);
+    for (const entry of history.items) {
+      const sign = entry.delta > 0 ? "+" : "";
+      console.log(
+        `  ${entry.created_at} ${sign}${entry.delta} (${entry.rank_before}→${entry.rank_after}) — ${entry.reason}`,
+      );
+    }
+    return;
+  }
+
+  if (sub && sub !== "show") {
+    console.error("Usage: fortytwo capability [show|history]");
+    process.exit(1);
+  }
+
+  const cap = await client.getCapability(nodeId);
+  console.log(`Node tier:      ${cap.node_tier}`);
+  console.log(`Capability:     ${cap.capability_rank}/42`);
+  console.log(`Dead locked:    ${cap.is_dead_locked ? "yes" : "no"}`);
+}
+
+async function cmdReset(flags: Record<string, string>) {
+  const { client, nodeId } = await loadClient();
+  if (!flags.yes && !flags.y) {
+    console.log(
+      `This will reset agent ${nodeId} to Capability 0 and drop 250 FOR into challenge_locked.`,
+    );
+    console.log("Re-run with --yes to confirm.");
+    return;
+  }
+  const result = await resetAccount(client, console.log);
+  console.log(
+    `✓ Reset applied — rank ${result.rank_before}→0, +${result.drop_amount} FOR locked.`,
+  );
+}
+
+async function cmdChallenge(positionals: string[]) {
+  const sub = positionals[0];
+  const { client } = await loadClient();
+
+  if (!sub || sub === "list") {
+    const page = await client.listActiveChallengeRounds(1, 50);
+    if (page.items.length === 0) {
+      console.log("No active challenge rounds.");
+      return;
+    }
+    console.log(`Active challenge rounds (${page.items.length}):`);
+    for (const r of page.items) {
+      const answered = r.has_answered ? " [answered]" : "";
+      console.log(`  ${r.id}  ends ${r.ends_at}  reward ${r.reward_per_winner} FOR${answered}`);
+    }
+    return;
+  }
+
+  if (sub === "answer") {
+    const roundId = positionals[1];
+    const answer = positionals.slice(2).join(" ");
+    if (!roundId || !answer) {
+      console.error("Usage: fortytwo challenge answer <round_id> <answer>");
+      process.exit(1);
+      return;
+    }
+    const response = await client.submitChallengeAnswer(roundId, answer);
+    console.log(
+      `✓ Answer submitted — id=${response.id}, staked ${response.staked_amount} FOR`,
+    );
+    return;
+  }
+
+  console.error("Usage: fortytwo challenge [list|answer <round_id> <answer>]");
+  process.exit(1);
 }
 
 function cmdConfig(positionals: string[]) {
@@ -387,7 +499,11 @@ Usage:
   fortytwo setup [flags]            Register new node
   fortytwo import [flags]           Import existing node
   fortytwo run [-v]                 Run node (headless)
-  fortytwo ask <question>           Submit a question
+  fortytwo ask <question>           Submit a question (Capable only)
+  fortytwo capability [history]     Show capability rank / tier (or history)
+  fortytwo reset --yes              Reset capability to 0 (+250 FOR locked)
+  fortytwo challenge list           List active Capability Challenge rounds
+  fortytwo challenge answer <id> <a> Submit manual answer to a round
   fortytwo config show              Show config
   fortytwo config set <key> <value> Update config
   fortytwo identity                 Show node credentials
@@ -448,6 +564,15 @@ async function run() {
         break;
       case "ask":
         await cmdAsk(positionals);
+        break;
+      case "capability":
+        await cmdCapability(positionals);
+        break;
+      case "reset":
+        await cmdReset(flags);
+        break;
+      case "challenge":
+        await cmdChallenge(positionals);
         break;
       case "config":
         cmdConfig(positionals);

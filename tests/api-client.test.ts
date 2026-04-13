@@ -104,17 +104,25 @@ describe("FortyTwoClient", () => {
     await expect(client.request("GET", "/test", { auth: false })).rejects.toThrow("Intelligence rank too low");
   });
 
-  it("register sends public key", async () => {
-    mockFetch({ challenge_session_id: "sess-1", challenges: [] });
+  it("register returns 1-step payload", async () => {
+    mockFetch({
+      agent_id: "a1",
+      secret: "s1",
+      capability_rank: 0,
+      node_tier: "challenger",
+      message: "ok",
+    });
     const client = new FortyTwoClient("https://api.test.com");
     const data = await client.register("-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----", "MyBot");
-    expect(data.challenge_session_id).toBe("sess-1");
+    expect(data.agent_id).toBe("a1");
+    expect(data.node_tier).toBe("challenger");
+    expect(data.capability_rank).toBe(0);
     const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
     expect(body.display_name).toBe("MyBot");
   });
 
   it("register without displayName omits it", async () => {
-    mockFetch({ challenge_session_id: "sess-1", challenges: [] });
+    mockFetch({ agent_id: "a1", secret: "s1", capability_rank: 0, node_tier: "challenger" });
     const client = new FortyTwoClient("https://api.test.com");
     await client.register("pubkey");
     const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
@@ -195,15 +203,6 @@ describe("FortyTwoClient", () => {
     await expect(client.request("GET", "/test", { auth: false, maxRetries: 1 })).rejects.toThrow("ECONNREFUSED");
   });
 
-  it("completeRegistration sends session and responses", async () => {
-    mockFetch({ passed: true, agent_id: "a1", secret: "s1" });
-    const client = new FortyTwoClient("https://api.test.com");
-    const result = await client.completeRegistration("sess-1", [{ challenge_id: "c1", choice: 0 }]);
-    expect(result.passed).toBe(true);
-    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
-    expect(body.challenge_session_id).toBe("sess-1");
-  });
-
   it("getBalance calls correct endpoint", async () => {
     mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
     const client = new FortyTwoClient("https://api.test.com");
@@ -270,14 +269,69 @@ describe("FortyTwoClient", () => {
     expect(body.good_answers).toEqual(["a1"]);
   });
 
-  it("startAccountReset calls correct endpoint", async () => {
+  it("getCapability calls correct endpoint", async () => {
     mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
     const client = new FortyTwoClient("https://api.test.com");
     await client.login("agent-1", "secret");
+    mockFetch({
+      agent_id: "agent-1",
+      capability_rank: 21,
+      node_tier: "challenger",
+      is_dead_locked: false,
+    });
+    const data = await client.getCapability();
+    expect(data.capability_rank).toBe(21);
+    expect(data.node_tier).toBe("challenger");
+    expect((globalThis.fetch as any).mock.calls[0][0]).toContain("/capability/agent-1");
+  });
 
-    mockFetch({ challenge_session_id: "sess" });
-    const data = await client.startAccountReset();
-    expect(data.challenge_session_id).toBe("sess");
+  it("resetCapability calls correct endpoint", async () => {
+    mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
+    const client = new FortyTwoClient("https://api.test.com");
+    await client.login("agent-1", "secret");
+    mockFetch({
+      agent_id: "agent-1",
+      capability_rank: 0,
+      rank_before: 30,
+      challenge_locked: "250",
+      drop_amount: "250",
+    });
+    const data = await client.resetCapability();
+    expect(data.rank_before).toBe(30);
+    expect(data.drop_amount).toBe("250");
+    expect((globalThis.fetch as any).mock.calls[0][0]).toContain("/capability/agent-1/reset");
+    expect((globalThis.fetch as any).mock.calls[0][1].method).toBe("POST");
+  });
+
+  it("listActiveChallengeRounds paginates correctly", async () => {
+    mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
+    const client = new FortyTwoClient("https://api.test.com");
+    await client.login("agent-1", "secret");
+    mockFetch({ items: [{ id: "r1", content: "Y/N?" }], total: 1, page: 1, page_size: 20 });
+    const data = await client.listActiveChallengeRounds(1, 20);
+    expect(data.items[0].id).toBe("r1");
+    expect((globalThis.fetch as any).mock.calls[0][0]).toContain("/foundation-pool/rounds");
+    expect((globalThis.fetch as any).mock.calls[0][0]).toContain("page=1");
+  });
+
+  it("submitChallengeAnswer sends content", async () => {
+    mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
+    const client = new FortyTwoClient("https://api.test.com");
+    await client.login("agent-1", "secret");
+    mockFetch({ id: "ans-1", staked_amount: "10" });
+    const data = await client.submitChallengeAnswer("round-1", "Yes");
+    expect(data.id).toBe("ans-1");
+    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
+    expect(body.content).toBe("Yes");
+  });
+
+  it("throws ApiError with status on 403", async () => {
+    mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
+    const client = new FortyTwoClient("https://api.test.com");
+    await client.login("agent-1", "secret");
+    mockFetch({ detail: "Challenger nodes cannot create queries." }, 403);
+    const { ApiError } = await import("../src/api-client.js");
+    await expect(client.createQuery("ciphertext", "general")).rejects.toBeInstanceOf(ApiError);
   });
 
   it("throws after all retries exhausted", async () => {
@@ -381,15 +435,6 @@ describe("FortyTwoClient", () => {
     mockFetch({ decrypted_content: "What?" });
     const data = await client.getQuery("q-1");
     expect(data.decrypted_content).toBe("What?");
-  });
-
-  it("completeAccountReset sends session and responses", async () => {
-    mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
-    const client = new FortyTwoClient("https://api.test.com");
-    await client.login("agent-1", "secret");
-    mockFetch({ passed: true });
-    const data = await client.completeAccountReset("sess-1", [{ challenge_id: "c1", choice: 0 }]);
-    expect(data.passed).toBe(true);
   });
 
   it("getAgentStats calls correct endpoint", async () => {

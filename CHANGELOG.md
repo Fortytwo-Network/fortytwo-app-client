@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Node Tier model (Challenger / Capable) and Capability rank (0–42)
+- Capability Challenge worker — Challengers auto-answer Foundation Pool rounds
+- `challenge_locked` wallet, tier badge, capability progress bar, dead-lock banner
+- CLI: `capability [history]`, `reset --yes`, `challenge list|answer`
+- TUI: `/capability [history]`, `/challenge list`
+
+### Changed
+- Registration: 2-step challenge quiz → 1-step; no LLM key needed to onboard
+- `reset` is one-shot, requires `--yes`
+- `min_balance` gates Capable only; Challengers stake from `challenge_locked`
+
+### Removed
+- Reactivation flow, 2-step register, challenge-based reset endpoints
+- `compareForRegistration` LLM helper
+- Auto-reset on `InsufficientFundsError`
+
 ## [0.1.6] - 13.04.2026
 
 ### Features

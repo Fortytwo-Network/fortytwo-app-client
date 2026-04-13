@@ -296,18 +296,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
         const displayName = cfg.node_display_name || values.node_name || "JudgeNode";
         await registerAgent(client, displayName, (msg) => {
           if (cancelled) return;
-          if (msg.startsWith("~")) {
-            // Replace last line (progress update)
-            const text = msg.slice(1);
-            setRegLog((prev) => {
-              if (prev.length > 0 && prev[prev.length - 1].startsWith("[progress]")) {
-                return [...prev.slice(0, -1), `[progress]${text}`];
-              }
-              return [...prev, `[progress]${text}`];
-            });
-          } else {
-            setRegLog((prev) => [...prev, msg]);
-          }
+          setRegLog((prev) => [...prev, msg]);
         });
 
         if (cancelled) return;
@@ -449,7 +438,6 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   }
 
   if (phase === "registering" || phase === "importing") {
-    const displayLine = (line: string) => line.replace(/^\[progress]/, "");
     const last = regLog.length - 1;
     const header = phase === "importing" ? "IMPORT NODE" : "REGISTRATION";
 
@@ -460,10 +448,9 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
         <Box flexDirection="column">
           {regLog.map((line, i) => {
             const isCurrent = i === last;
-            const text = displayLine(line);
             return (
               <Text key={i} color={isCurrent ? undefined : COLORS.GREY_NEUTRAL}>
-                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "   "}{text}
+                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "   "}{line}
               </Text>
             );
           })}

@@ -81,7 +81,7 @@ export function resetLlmClient(): void {
   semaphore = null;
 }
 
-type LlmPurpose = "ranking" | "generation" | "registration" | "other";
+type LlmPurpose = "ranking" | "generation" | "other";
 
 const stats = {
   calls: 0,
@@ -248,43 +248,6 @@ export async function callLlm(
   purpose: LlmPurpose = "other",
 ): Promise<string> {
   return callLlmApi([{ role: "user", content: prompt }], retries, 0.3, signal, purpose);
-}
-
-export async function compareForRegistration(
-  question: string,
-  optionA: string,
-  optionB: string,
-  signal?: AbortSignal,
-): Promise<number> {
-  const prompt =
-    `######Problem######: \n${question}\n` +
-    `######Solution A######. \n${optionA}\n` +
-    `######Solution B######. \n${optionB}\n` +
-    `######Instruction######:\n` +
-    `Select the best one of the two proposed solutions to the problem. ` +
-    `THEN end output with best solution overall index (A or B) on the new line ` +
-    `(Only letter, nothing else).\n` +
-    `Don't try to re-solve/re-compute/re-think the problem. ` +
-    `Only find flows/mistakes in a proposed solutions and pick the best one (and that not validated/certified by you to be ideal/fully correct).\n` +
-    `If both solutions are equal or you cannot determine which is better, output U.\n` +
-    `######Decision######:`;
-
-  try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await callLlm(prompt, 2, signal, "registration");
-      const letter = parseLastLetter(response, new Set(["A", "B", "U"]));
-      if (letter !== null) {
-        if (letter === "A") return 1;
-        if (letter === "B") return -1;
-        return 0;
-      }
-    }
-  } catch (err) {
-    verbose(`✗ Registration comparison failed: ${err}`);
-    return 0;
-  }
-
-  return 0;
 }
 
 export async function evaluateGoodEnough(

@@ -27,6 +27,28 @@ const mockClient = {
   login: vi.fn().mockResolvedValue({}),
   getAgent: vi.fn().mockResolvedValue({ profile: { node_display_name: "Bot" } }),
   createQuery: vi.fn().mockResolvedValue({ id: "q-1" }),
+  getCapability: vi.fn().mockResolvedValue({
+    agent_id: "agent-1",
+    capability_rank: 42,
+    node_tier: "capable",
+    is_dead_locked: false,
+  }),
+  resetCapability: vi.fn().mockResolvedValue({
+    agent_id: "agent-1",
+    capability_rank: 0,
+    rank_before: 30,
+    challenge_locked: "250",
+    drop_amount: "250",
+  }),
+  listActiveChallengeRounds: vi.fn().mockResolvedValue({
+    items: [], total: 0, page: 1, page_size: 20,
+  }),
+  submitChallengeAnswer: vi.fn().mockResolvedValue({
+    id: "ans-1", staked_amount: "10",
+  }),
+  getCapabilityHistory: vi.fn().mockResolvedValue({
+    items: [], total: 0, page: 1, page_size: 20,
+  }),
 };
 
 vi.mock("../src/api-client.js", () => {
@@ -35,14 +57,34 @@ vi.mock("../src/api-client.js", () => {
     login = mockClient.login;
     getAgent = mockClient.getAgent;
     createQuery = mockClient.createQuery;
+    getCapability = mockClient.getCapability;
+    resetCapability = mockClient.resetCapability;
+    listActiveChallengeRounds = mockClient.listActiveChallengeRounds;
+    submitChallengeAnswer = mockClient.submitChallengeAnswer;
+    getCapabilityHistory = mockClient.getCapabilityHistory;
   }
-  return { FortyTwoClient: MockFortyTwoClient };
+  class MockApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+    }
+  }
+  return { FortyTwoClient: MockFortyTwoClient, ApiError: MockApiError };
 });
 
 vi.mock("../src/identity.js", () => ({
   loadIdentity: vi.fn().mockReturnValue({ node_id: "agent-1", node_secret: "sec" }),
   saveIdentity: vi.fn(),
   registerAgent: vi.fn().mockResolvedValue({ node_id: "new-agent", node_secret: "new-sec" }),
+  resetAccount: vi.fn().mockResolvedValue({
+    agent_id: "agent-1",
+    capability_rank: 0,
+    rank_before: 30,
+    challenge_locked: "250",
+    drop_amount: "250",
+  }),
 }));
 
 vi.mock("../src/main.js", () => ({
@@ -338,6 +380,169 @@ describe("cli", () => {
       const { loadIdentity } = await import("../src/identity.js");
       vi.mocked(loadIdentity).mockReturnValue(null);
       await runCli(["ask", "test"]);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("blocks Challenger via capability pre-check", async () => {
+      mockClient.getCapability.mockResolvedValue({
+        agent_id: "agent-1",
+        capability_rank: 10,
+        node_tier: "challenger",
+        is_dead_locked: false,
+      });
+      await runCli(["ask", "What"]);
+      expect(mockClient.createQuery).not.toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const errOut = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(errOut).toContain("Challenger");
+    });
+
+    it("falls back gracefully on 404 from getCapability (old server)", async () => {
+      const { ApiError } = await import("../src/api-client.js");
+      mockClient.getCapability.mockRejectedValue(new ApiError(404, "not found"));
+      await runCli(["ask", "What"]);
+      expect(mockClient.createQuery).toHaveBeenCalled();
+    });
+
+    it("surfaces 403 from createQuery as friendly message", async () => {
+      mockClient.getCapability.mockResolvedValue({
+        agent_id: "agent-1",
+        capability_rank: 42,
+        node_tier: "capable",
+        is_dead_locked: false,
+      });
+      const { ApiError } = await import("../src/api-client.js");
+      mockClient.createQuery.mockRejectedValue(new ApiError(403, "Challenger nodes cannot create queries."));
+      await runCli(["ask", "Hi"]);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const errOut = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(errOut).toContain("Challenger");
+    });
+  });
+
+  describe("capability command", () => {
+    it("prints tier and rank", async () => {
+      mockClient.getCapability.mockResolvedValue({
+        agent_id: "agent-1",
+        capability_rank: 21,
+        node_tier: "challenger",
+        is_dead_locked: false,
+      });
+      await runCli(["capability"]);
+      const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(out).toContain("challenger");
+      expect(out).toContain("21/42");
+      expect(out).toContain("Dead locked:    no");
+    });
+
+    it("prints history", async () => {
+      mockClient.getCapabilityHistory.mockResolvedValue({
+        items: [
+          {
+            id: "h1",
+            agent_id: "agent-1",
+            delta: 3,
+            rank_before: 10,
+            rank_after: 13,
+            reason: "challenge_correct",
+            reference_id: null,
+            created_at: "2026-04-13T10:00:00Z",
+          },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 20,
+      });
+      await runCli(["capability", "history"]);
+      const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(out).toContain("+3");
+      expect(out).toContain("10→13");
+      expect(out).toContain("challenge_correct");
+    });
+
+    it("prints a message when history is empty", async () => {
+      mockClient.getCapabilityHistory.mockResolvedValue({
+        items: [], total: 0, page: 1, page_size: 20,
+      });
+      await runCli(["capability", "history"]);
+      const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(out).toContain("No capability changes");
+    });
+
+    it("exits on unknown capability sub", async () => {
+      await runCli(["capability", "bogus"]);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("reset command", () => {
+    it("prints confirmation prompt without --yes and does not reset", async () => {
+      const { resetAccount } = await import("../src/identity.js");
+      await runCli(["reset"]);
+      expect(resetAccount).not.toHaveBeenCalled();
+      const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(out).toContain("--yes");
+    });
+
+    it("calls resetAccount with --yes", async () => {
+      const { resetAccount } = await import("../src/identity.js");
+      await runCli(["reset", "--yes"]);
+      expect(resetAccount).toHaveBeenCalled();
+    });
+  });
+
+  describe("challenge command", () => {
+    it("list prints rounds", async () => {
+      mockClient.listActiveChallengeRounds.mockResolvedValue({
+        items: [{
+          id: "round-1",
+          foundation_pool_id: "fp-1",
+          content: "?",
+          status: "active",
+          starts_at: "2026-04-13T10:00:00Z",
+          ends_at: "2026-04-13T12:00:00Z",
+          for_budget_total: "100",
+          settled_at: null,
+          winners_count: 0,
+          reward_per_winner: "10",
+          created_at: "2026-04-13T10:00:00Z",
+          has_answered: false,
+        }],
+        total: 1, page: 1, page_size: 20,
+      });
+      await runCli(["challenge", "list"]);
+      const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(out).toContain("round-1");
+      expect(out).toContain("10 FOR");
+    });
+
+    it("list says so when no rounds", async () => {
+      mockClient.listActiveChallengeRounds.mockResolvedValue({
+        items: [], total: 0, page: 1, page_size: 20,
+      });
+      await runCli(["challenge", "list"]);
+      const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(out).toContain("No active challenge rounds");
+    });
+
+    it("answer submits an answer", async () => {
+      mockClient.submitChallengeAnswer.mockResolvedValue({
+        id: "ans-1", staked_amount: "10", round_id: "r1", agent_id: "a",
+        content: "Yes", is_correct: null, capability_delta: 0,
+        reward_amount: "0", submitted_at: "", validated_at: null,
+      });
+      await runCli(["challenge", "answer", "r1", "Yes"]);
+      expect(mockClient.submitChallengeAnswer).toHaveBeenCalledWith("r1", "Yes");
+    });
+
+    it("answer exits when round_id or answer missing", async () => {
+      await runCli(["challenge", "answer"]);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(mockClient.submitChallengeAnswer).not.toHaveBeenCalled();
+    });
+
+    it("exits on unknown challenge sub", async () => {
+      await runCli(["challenge", "bogus"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });

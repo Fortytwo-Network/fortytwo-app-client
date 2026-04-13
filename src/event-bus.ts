@@ -96,6 +96,11 @@ export interface ViewerStats {
   forBalance: string;
   intelligenceNormalized: string;
   judgingNormalized: string;
+  challengeLocked: number;
+  capabilityRank: number | null;
+  nodeTier: "challenger" | "capable" | null;
+  isDeadLocked: boolean;
+  challengeRoundsAvailable: number;
 }
 
 export interface ViewerConfig {
@@ -152,6 +157,11 @@ function defaultStats(): ViewerStats {
     forBalance: "0",
     intelligenceNormalized: "0",
     judgingNormalized: "0",
+    challengeLocked: 0,
+    capabilityRank: null,
+    nodeTier: null,
+    isDeadLocked: false,
+    challengeRoundsAvailable: 0,
   };
 }
 
@@ -342,6 +352,22 @@ class ViewerEventBus extends EventEmitter {
   setConfig(cfg: Partial<ViewerConfig>): void {
     Object.assign(this._config, cfg);
     this._emit({ type: "config_update", data: { ...this._config } });
+  }
+
+  setCapability(
+    capabilityRank: number,
+    nodeTier: "challenger" | "capable",
+    isDeadLocked = false,
+  ): void {
+    this._stats.capabilityRank = capabilityRank;
+    this._stats.nodeTier = nodeTier;
+    this._stats.isDeadLocked = isDeadLocked;
+    this.broadcastStats();
+  }
+
+  setChallengeRoundsAvailable(count: number): void {
+    this._stats.challengeRoundsAvailable = count;
+    this.broadcastStats();
   }
 }
 
