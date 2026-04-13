@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 13.04.2026
+
+### Features
+- Added Node Vision — real-time web dashboard for monitoring bot activity
+- Added multi-profile support — run and manage several accounts from a single CLI
+- Added automatic version check — CLI notifies when a newer release is available
+
+### Reliability
+- Improved CLI stability on Windows
+
+## [0.1.5] - 03.03.2026
+
 ### Error handling
 - Actionable error messages for local inference failures (server not running, model not loaded, timeout)
 
