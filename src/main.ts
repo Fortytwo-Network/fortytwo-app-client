@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as config from "./config.js";
 import { sleep, secondsUntilDeadline, setVerbose, log, getRoleLabel } from "./utils.js";
-import { FortyTwoClient, ApiError } from "./api-client.js";
+import { FortyTwoClient } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
 import { judgeChallenge } from "./judging.js";
 import { answerQuery } from "./answering.js";
@@ -113,22 +113,11 @@ export async function checkBalance(client: FortyTwoClient): Promise<number> {
   }
 }
 
-/**
- * Fetch the agent's current capability state. Falls back to a "capable" view
- * when the server predates TZ-001 (404 on /capability/{id}).
- */
-export async function fetchCapability(client: FortyTwoClient): Promise<CapabilityInfo | null> {
-  try {
-    const cap = await client.getCapability();
-    viewerBus.setCapability(cap.capability_rank, cap.node_tier, cap.is_dead_locked);
-    return cap;
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      // Old server — treat as capable with unknown rank.
-      return null;
-    }
-    throw err;
-  }
+/** Fetch the agent's current capability state. */
+export async function fetchCapability(client: FortyTwoClient): Promise<CapabilityInfo> {
+  const cap = await client.getCapability();
+  viewerBus.setCapability(cap.capability_rank, cap.node_tier, cap.is_dead_locked);
+  return cap;
 }
 
 // Track in-flight task IDs to avoid duplicates across cycles
@@ -252,13 +241,13 @@ export async function processQueries(client: FortyTwoClient, dualMode = false): 
  */
 export async function runCycle(
   client: FortyTwoClient,
-  capability: CapabilityInfo | null,
+  capability: CapabilityInfo,
   challengeCtx: ChallengeContext,
 ): Promise<number> {
   const cfg = config.get();
   const role = cfg.node_role;
 
-  if (capability?.is_dead_locked) {
+  if (capability.is_dead_locked) {
     log("Dead lock — no FOR available. Run 'fortytwo reset' to unlock.");
     viewerBus.pushError("Dead lock: no FOR available. Reset required.");
     return 0;
@@ -267,11 +256,11 @@ export async function runCycle(
   // Challenger: participate in Capability Challenge rounds. ELO is frozen, so
   // we do not run the normal answer/judge loops for Challengers — reaching
   // rank 42 requires solving puzzles.
-  if (capability?.node_tier === "challenger") {
+  if (capability.node_tier === "challenger") {
     return await processChallengeRounds(challengeCtx);
   }
 
-  // Capable (or old server without capability endpoint): normal flow.
+  // Capable: normal flow.
   let total = 0;
   if (role === "JUDGE") {
     total += await processChallenges(client, false);
@@ -348,8 +337,7 @@ export async function main(signal?: AbortSignal): Promise<void> {
         // on queries/judgments). Challengers are funded from `challenge_locked`
         // instead, so a zero `available` balance is expected and must not block
         // their Capability Challenge participation.
-        const isCapable = capability === null || capability.node_tier === "capable";
-        if (isCapable && available < cfg.min_balance) {
+        if (capability.node_tier === "capable" && available < cfg.min_balance) {
           const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
           log(msg);
           viewerBus.pushError(msg);

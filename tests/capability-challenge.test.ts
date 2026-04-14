@@ -38,7 +38,6 @@ import {
   processChallengeRounds,
   createChallengeContext,
 } from "../src/capability-challenge.js";
-import { ApiError } from "../src/api-client.js";
 
 // In 2026-04-13 the test is pinned to a future ends_at
 const FAR_FUTURE = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -48,17 +47,21 @@ function buildRound(overrides: Record<string, any> = {}) {
   return {
     id: "round-aaaaaaaa",
     foundation_pool_id: "fp-1",
-    content: "Is sky blue?",
+    // content is hidden in listing; revealed after join.
     status: "active",
     starts_at: new Date(Date.now() - 1000).toISOString(),
     ends_at: FAR_FUTURE,
     for_budget_total: "100",
+    max_participants: 20,
+    joined_count: 5,
+    slots_remaining: 15,
+    has_joined: false,
+    has_answered: false,
     settled_at: null,
     winners_count: 0,
     reward_per_winner: "10",
     created_at: new Date(Date.now() - 1000).toISOString(),
     answer_count: 0,
-    has_answered: false,
     ...overrides,
   };
 }
@@ -67,6 +70,12 @@ function makeClient(partial: Record<string, any> = {}) {
   return {
     listActiveChallengeRounds: vi.fn().mockResolvedValue({
       items: [], total: 0, page: 1, page_size: 20,
+    }),
+    joinChallengeRound: vi.fn().mockResolvedValue({
+      id: "round-aaaaaaaa",
+      content: "Is sky blue?",
+      stake_amount: "10",
+      participant_id: "p-1",
     }),
     submitChallengeAnswer: vi.fn().mockResolvedValue({
       id: "ans-1",
@@ -169,8 +178,8 @@ describe("processChallengeRounds", () => {
     expect(ctx.inFlight.size).toBe(0);
   });
 
-  it("generates an answer and submits it on the happy path", async () => {
-    const round = buildRound();
+  it("joins round, gets content, generates answer, and submits (new server)", async () => {
+    const round = buildRound(); // content hidden
     const client = makeClient({
       listActiveChallengeRounds: vi.fn().mockResolvedValue({
         items: [round], total: 1, page: 1, page_size: 20,
@@ -181,15 +190,45 @@ describe("processChallengeRounds", () => {
     const count = await processChallengeRounds(ctx);
 
     expect(count).toBe(1);
+    expect(client.joinChallengeRound).toHaveBeenCalledWith(round.id);
     expect(mockLlm.generateAnswer).toHaveBeenCalledTimes(1);
     expect(mockLlm.generateAnswer).toHaveBeenCalledWith(
       expect.stringContaining("logic puzzle"),
-      round.content,
+      "Is sky blue?", // from joinChallengeRound mock
     );
     expect(client.submitChallengeAnswer).toHaveBeenCalledWith(round.id, "Yes");
-    expect(mockUtils.pinTask).toHaveBeenCalledWith(round.id, expect.any(String));
-    expect(mockUtils.unpinTask).toHaveBeenCalledWith(round.id);
     expect(ctx.inFlight.size).toBe(0);
+  });
+
+  it("uses cached content when already joined", async () => {
+    const round = buildRound({ has_joined: true, content: "Cached question" });
+    const client = makeClient({
+      listActiveChallengeRounds: vi.fn().mockResolvedValue({
+        items: [round], total: 1, page: 1, page_size: 20,
+      }),
+    });
+    const ctx = createChallengeContext(client);
+
+    await processChallengeRounds(ctx);
+
+    expect(client.joinChallengeRound).not.toHaveBeenCalled();
+    expect(mockLlm.generateAnswer).toHaveBeenCalledWith(
+      expect.any(String),
+      "Cached question",
+    );
+  });
+
+  it("filters out full rounds (slots_remaining = 0)", async () => {
+    const round = buildRound({ slots_remaining: 0 });
+    const client = makeClient({
+      listActiveChallengeRounds: vi.fn().mockResolvedValue({
+        items: [round], total: 1, page: 1, page_size: 20,
+      }),
+    });
+    const ctx = createChallengeContext(client);
+    const count = await processChallengeRounds(ctx);
+    expect(count).toBe(0);
+    expect(client.joinChallengeRound).not.toHaveBeenCalled();
   });
 
   it("keeps processing subsequent rounds after a submit error", async () => {
@@ -198,6 +237,9 @@ describe("processChallengeRounds", () => {
     const client = makeClient({
       listActiveChallengeRounds: vi.fn().mockResolvedValue({
         items: [badRound, goodRound], total: 2, page: 1, page_size: 20,
+      }),
+      joinChallengeRound: vi.fn().mockResolvedValue({
+        content: "Q?", stake_amount: "10", participant_id: "p",
       }),
       submitChallengeAnswer: vi.fn()
         .mockRejectedValueOnce(new Error("boom"))
@@ -213,17 +255,6 @@ describe("processChallengeRounds", () => {
     expect(mockUtils.log).toHaveBeenCalledWith(expect.stringContaining("failed"));
   });
 
-  it("returns 0 gracefully on 404 (old server without Foundation Pool)", async () => {
-    const client = makeClient({
-      listActiveChallengeRounds: vi.fn().mockRejectedValue(new ApiError(404, "Not found")),
-    });
-    const ctx = createChallengeContext(client);
-    const count = await processChallengeRounds(ctx);
-    expect(count).toBe(0);
-    expect(mockBus.setChallengeRoundsAvailable).toHaveBeenCalledWith(0);
-    expect(mockLlm.generateAnswer).not.toHaveBeenCalled();
-  });
-
   it("stops processing further rounds once the node transitions to Capable mid-cycle", async () => {
     const r1 = buildRound({ id: "r1" });
     const r2 = buildRound({ id: "r2" });
@@ -231,6 +262,9 @@ describe("processChallengeRounds", () => {
     const client = makeClient({
       listActiveChallengeRounds: vi.fn().mockResolvedValue({
         items: [r1, r2, r3], total: 3, page: 1, page_size: 20,
+      }),
+      joinChallengeRound: vi.fn().mockResolvedValue({
+        content: "Q?", stake_amount: "10", participant_id: "p",
       }),
       submitChallengeAnswer: vi.fn()
         .mockResolvedValueOnce({ id: "ans-1", staked_amount: "10" }) // r1 succeeds
@@ -250,9 +284,9 @@ describe("processChallengeRounds", () => {
     );
   });
 
-  it("rethrows non-404 listActiveChallengeRounds errors", async () => {
+  it("propagates listActiveChallengeRounds errors", async () => {
     const client = makeClient({
-      listActiveChallengeRounds: vi.fn().mockRejectedValue(new ApiError(500, "boom")),
+      listActiveChallengeRounds: vi.fn().mockRejectedValue(new Error("boom")),
     });
     const ctx = createChallengeContext(client);
     await expect(processChallengeRounds(ctx)).rejects.toThrow("boom");

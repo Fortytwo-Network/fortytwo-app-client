@@ -43,6 +43,10 @@ const mockClient = {
   listActiveChallengeRounds: vi.fn().mockResolvedValue({
     items: [], total: 0, page: 1, page_size: 20,
   }),
+  getChallengeRound: vi.fn().mockResolvedValue({ has_joined: false }),
+  joinChallengeRound: vi.fn().mockResolvedValue({
+    content: "Q?", stake_amount: "10", participant_id: "p-1",
+  }),
   submitChallengeAnswer: vi.fn().mockResolvedValue({
     id: "ans-1", staked_amount: "10",
   }),
@@ -60,6 +64,8 @@ vi.mock("../src/api-client.js", () => {
     getCapability = mockClient.getCapability;
     resetCapability = mockClient.resetCapability;
     listActiveChallengeRounds = mockClient.listActiveChallengeRounds;
+    getChallengeRound = mockClient.getChallengeRound;
+    joinChallengeRound = mockClient.joinChallengeRound;
     submitChallengeAnswer = mockClient.submitChallengeAnswer;
     getCapabilityHistory = mockClient.getCapabilityHistory;
   }
@@ -397,13 +403,6 @@ describe("cli", () => {
       expect(errOut).toContain("Challenger");
     });
 
-    it("falls back gracefully on 404 from getCapability (old server)", async () => {
-      const { ApiError } = await import("../src/api-client.js");
-      mockClient.getCapability.mockRejectedValue(new ApiError(404, "not found"));
-      await runCli(["ask", "What"]);
-      expect(mockClient.createQuery).toHaveBeenCalled();
-    });
-
     it("surfaces 403 from createQuery as friendly message", async () => {
       mockClient.getCapability.mockResolvedValue({
         agent_id: "agent-1",
@@ -513,7 +512,7 @@ describe("cli", () => {
       await runCli(["challenge", "list"]);
       const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
       expect(out).toContain("round-1");
-      expect(out).toContain("10 FOR");
+      expect(out).toContain("100 FOR");
     });
 
     it("list says so when no rounds", async () => {
@@ -525,13 +524,24 @@ describe("cli", () => {
       expect(out).toContain("No active challenge rounds");
     });
 
-    it("answer submits an answer", async () => {
+    it("auto-joins then submits an answer", async () => {
+      mockClient.getChallengeRound.mockResolvedValue({ has_joined: false });
+      mockClient.joinChallengeRound.mockResolvedValue({ content: "Q?", stake_amount: "10" });
       mockClient.submitChallengeAnswer.mockResolvedValue({
         id: "ans-1", staked_amount: "10", round_id: "r1", agent_id: "a",
         content: "Yes", is_correct: null, capability_delta: 0,
         reward_amount: "0", submitted_at: "", validated_at: null,
       });
       await runCli(["challenge", "answer", "r1", "Yes"]);
+      expect(mockClient.joinChallengeRound).toHaveBeenCalledWith("r1");
+      expect(mockClient.submitChallengeAnswer).toHaveBeenCalledWith("r1", "Yes");
+    });
+
+    it("skips join when already joined", async () => {
+      mockClient.getChallengeRound.mockResolvedValue({ has_joined: true });
+      mockClient.submitChallengeAnswer.mockResolvedValue({ id: "ans-1" });
+      await runCli(["challenge", "answer", "r1", "Yes"]);
+      expect(mockClient.joinChallengeRound).not.toHaveBeenCalled();
       expect(mockClient.submitChallengeAnswer).toHaveBeenCalledWith("r1", "Yes");
     });
 

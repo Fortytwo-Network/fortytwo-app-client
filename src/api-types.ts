@@ -61,18 +61,28 @@ export interface CapabilityHistoryEntry {
 export interface ChallengeRound {
   id: string;
   foundation_pool_id: string;
-  content: string;
+  content?: string;                // hidden in listing; present after join
   expected_answer?: string | null;
   status: "active" | "settled" | "cancelled";
   starts_at: string;
   ends_at: string;
   for_budget_total: string;
+  max_participants: number;
+  joined_count: number;
+  slots_remaining: number;
+  has_joined?: boolean;
+  has_answered?: boolean;
   settled_at: string | null;
   winners_count: number;
   reward_per_winner: string;
   created_at: string;
   answer_count?: number;
-  has_answered?: boolean;
+}
+
+export interface JoinRoundResponse extends ChallengeRound {
+  content: string;                 // guaranteed after join
+  stake_amount: string;
+  participant_id: string;
 }
 
 export interface ChallengeAnswer {

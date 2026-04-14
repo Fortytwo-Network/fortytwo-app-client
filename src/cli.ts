@@ -256,19 +256,14 @@ async function cmdAsk(positionals: string[]) {
   const { client, nodeId } = await loadClient();
 
   // Pre-check: Challenger nodes cannot create queries.
-  try {
-    const cap = await client.getCapability(nodeId);
-    if (cap.node_tier !== "capable") {
-      console.error(
-        `You are still a Challenger (rank ${cap.capability_rank}/42). ` +
-          `Reach Capability 42 by answering challenges first.`,
-      );
-      process.exit(1);
-      return;
-    }
-  } catch (err) {
-    // Old server (404) — fall through to createQuery which will succeed under old rules.
-    if (!(err instanceof ApiError && err.status === 404)) throw err;
+  const cap = await client.getCapability(nodeId);
+  if (cap.node_tier !== "capable") {
+    console.error(
+      `You are still a Challenger (rank ${cap.capability_rank}/42). ` +
+        `Reach Capability 42 by answering challenges first.`,
+    );
+    process.exit(1);
+    return;
   }
 
   const encrypted = Buffer.from(question, "utf-8").toString("base64");
@@ -344,8 +339,12 @@ async function cmdChallenge(positionals: string[]) {
     }
     console.log(`Active challenge rounds (${page.items.length}):`);
     for (const r of page.items) {
-      const answered = r.has_answered ? " [answered]" : "";
-      console.log(`  ${r.id}  ends ${r.ends_at}  reward ${r.reward_per_winner} FOR${answered}`);
+      const slots = `${r.joined_count}/${r.max_participants} joined`;
+      let tag = "";
+      if (r.slots_remaining <= 0) tag = " [full]";
+      else if (r.has_answered) tag = " [answered]";
+      else if (r.has_joined) tag = " [joined]";
+      console.log(`  ${r.id}  ends ${r.ends_at}  ${r.for_budget_total} FOR  ${slots}${tag}`);
     }
     return;
   }
@@ -358,10 +357,14 @@ async function cmdChallenge(positionals: string[]) {
       process.exit(1);
       return;
     }
+    // Auto-join if not already joined.
+    const round = await client.getChallengeRound(roundId);
+    if (!round.has_joined) {
+      console.log("Joining round...");
+      await client.joinChallengeRound(roundId);
+    }
     const response = await client.submitChallengeAnswer(roundId, answer);
-    console.log(
-      `✓ Answer submitted — id=${response.id}, staked ${response.staked_amount} FOR`,
-    );
+    console.log(`✓ Answer submitted — id=${response.id}`);
     return;
   }
 

@@ -57,11 +57,6 @@ vi.mock("../src/api-client.js", () => {
   return { FortyTwoClient: MockFortyTwoClient, ApiError: MockApiError };
 });
 
-async function makeApiError(status: number, message = "err") {
-  const { ApiError } = await import("../src/api-client.js");
-  return new ApiError(status, message);
-}
-
 vi.mock("../src/identity.js", () => ({
   loadIdentity: vi.fn().mockReturnValue({ node_id: "agent-1", node_secret: "sec" }),
   resetAccount: vi.fn().mockResolvedValue(undefined),
@@ -138,13 +133,7 @@ describe("fetchCapability", () => {
     expect(cap?.node_tier).toBe("capable");
   });
 
-  it("returns null for old servers (404)", async () => {
-    mockClient.getCapability.mockRejectedValue(await makeApiError(404, "not found"));
-    const cap = await fetchCapability(mockClient as any);
-    expect(cap).toBeNull();
-  });
-
-  it("rethrows non-404 errors", async () => {
+  it("propagates errors", async () => {
     mockClient.getCapability.mockRejectedValue(new Error("boom"));
     await expect(fetchCapability(mockClient as any)).rejects.toThrow("boom");
   });
@@ -277,14 +266,6 @@ describe("runCycle", () => {
     expect(count).toBe(0);
     expect(processChallengeRounds).not.toHaveBeenCalled();
     expect(mockClient.getPendingChallenges).not.toHaveBeenCalled();
-  });
-
-  it("treats null capability as Capable (backwards compat)", async () => {
-    mockCfg.node_role = "JUDGE";
-    mockClient.getPendingChallenges.mockResolvedValue({ challenges: [] });
-    const count = await runCycle(mockClient as any, null, challengeCtx);
-    expect(count).toBe(0);
-    expect(mockClient.getPendingChallenges).toHaveBeenCalled();
   });
 
   it("logs warning for unknown role", async () => {

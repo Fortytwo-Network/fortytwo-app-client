@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { CommandInput } from "./command-input.js";
 import { get as getConfig } from "./config.js";
 import { COLORS } from "./constants.js";
-import { setLogFn, setVerbose, log, sleep, getPinnedTasks, formatNumber, truncateName, getRoleLabel } from "./utils.js";
+import { setLogFn, setVerbose, log, sleep, formatNumber, truncateName, getRoleLabel } from "./utils.js";
 import { FortyTwoClient, ApiError } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
 import { runCycle, checkBalance, fetchCapability, initViewerBus } from "./main.js";
@@ -182,8 +182,12 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
           }
           pushLine(`Active challenge rounds (${page.items.length}):`);
           for (const r of page.items) {
-            const answered = r.has_answered ? " [answered]" : "";
-            pushLine(`  ${r.id}  ends ${r.ends_at}  reward ${r.reward_per_winner} FOR${answered}`);
+            const slots = `${r.joined_count}/${r.max_participants} joined`;
+            let tag = "";
+            if (r.slots_remaining <= 0) tag = " [full]";
+            else if (r.has_answered) tag = " [answered]";
+            else if (r.has_joined) tag = " [joined]";
+            pushLine(`  ${r.id}  ends ${r.ends_at}  ${r.for_budget_total} FOR  ${slots}${tag}`);
           }
         })
         .catch((err) => pushLine(`✕ Error: ${err}`));
@@ -346,8 +350,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
             // `min_balance` gates Capable nodes only. Challengers are funded
             // from `challenge_locked`, so a zero `available` is expected.
-            const isCapable = capability === null || capability.node_tier === "capable";
-            if (isCapable && available < cfg.min_balance) {
+            if (capability.node_tier === "capable" && available < cfg.min_balance) {
               const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
               log(`⚠ ${msg}`);
               viewerBus.pushError(msg);

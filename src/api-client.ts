@@ -5,6 +5,7 @@ import type {
   CapabilityHistoryEntry,
   ChallengeAnswer,
   ChallengeRound,
+  JoinRoundResponse,
   PaginatedResponse,
   RegistrationResponse,
   ResetResponse,
@@ -163,6 +164,13 @@ export class FortyTwoClient {
 
   async getChallengeRound(roundId: string): Promise<ChallengeRound> {
     return this.request<ChallengeRound>("GET", `/foundation-pool/rounds/${roundId}`);
+  }
+
+  async joinChallengeRound(roundId: string): Promise<JoinRoundResponse> {
+    return this.request<JoinRoundResponse>(
+      "POST",
+      `/foundation-pool/rounds/${roundId}/join`,
+    );
   }
 
   async submitChallengeAnswer(roundId: string, content: string): Promise<ChallengeAnswer> {

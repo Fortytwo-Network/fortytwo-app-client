@@ -1,4 +1,4 @@
-import { FortyTwoClient, ApiError } from "./api-client.js";
+import { FortyTwoClient } from "./api-client.js";
 import type { ChallengeRound } from "./api-types.js";
 import * as llm from "./llm.js";
 import { log, pinTask, unpinTask } from "./utils.js";
@@ -31,19 +31,11 @@ export function createChallengeContext(client: FortyTwoClient): ChallengeContext
 export async function processChallengeRounds(ctx: ChallengeContext): Promise<number> {
   viewerBus.setState("SCANNING");
 
-  let page;
-  try {
-    page = await ctx.client.listActiveChallengeRounds(1, 50);
-  } catch (err) {
-    // Backwards compat: old server doesn't have Foundation Pool yet.
-    if (err instanceof ApiError && err.status === 404) {
-      viewerBus.setChallengeRoundsAvailable(0);
-      return 0;
-    }
-    throw err;
-  }
+  const page = await ctx.client.listActiveChallengeRounds(1, 50);
 
-  const rounds = (page.items ?? []).filter((r) => !r.has_answered && r.status === "active");
+  const rounds = (page.items ?? []).filter(
+    (r) => !r.has_answered && r.status === "active" && r.slots_remaining > 0,
+  );
   viewerBus.setChallengeRoundsAvailable(rounds.length);
 
   if (rounds.length === 0) {
@@ -94,13 +86,27 @@ async function answerChallengeRound(ctx: ChallengeContext, round: ChallengeRound
 
   pinTask(round.id, `Challenge ${tag}`);
   try {
+    // Step 1: Join the round (stakes FOR, reveals content).
+    let content: string;
+    if (round.has_joined && round.content) {
+      content = round.content;
+    } else {
+      viewerBus.setState("JOINING");
+      log(`[challenge ${tag}] joining round...`);
+      const joined = await ctx.client.joinChallengeRound(round.id);
+      content = joined.content;
+      log(`[challenge ${tag}] ✓ joined (staked ${joined.stake_amount} FOR)`);
+    }
+
+    // Step 2: Generate answer via LLM.
     viewerBus.setState("THINKING");
     log(`[challenge ${tag}] answering puzzle...`);
-    const answer = await llm.generateAnswer(CHALLENGE_SYSTEM_PROMPT, round.content);
+    const answer = await llm.generateAnswer(CHALLENGE_SYSTEM_PROMPT, content);
 
+    // Step 3: Submit.
     viewerBus.setState("SUBMITTING");
-    const response = await ctx.client.submitChallengeAnswer(round.id, answer);
-    log(`[challenge ${tag}] ✓ submitted (staked ${response.staked_amount} FOR)`);
+    await ctx.client.submitChallengeAnswer(round.id, answer);
+    log(`[challenge ${tag}] ✓ submitted`);
   } finally {
     unpinTask(round.id);
   }
