@@ -273,7 +273,7 @@ describe("processChallengeRounds", () => {
     );
   });
 
-  it("breaks the loop on LLM failure (prevents staking on unanswerable rounds)", async () => {
+  it("rethrows LlmFailureError so the polling loop can ping-gate the next cycle", async () => {
     const r1 = buildRound({ id: "r1" });
     const r2 = buildRound({ id: "r2" });
     const r3 = buildRound({ id: "r3" });
@@ -285,14 +285,14 @@ describe("processChallengeRounds", () => {
     mockLlm.generateAnswer.mockRejectedValueOnce(new Error("Connection refused — local inference down"));
     const ctx = createChallengeContext(client);
 
-    await processChallengeRounds(ctx);
+    await expect(processChallengeRounds(ctx)).rejects.toMatchObject({
+      name: "LlmFailureError",
+    });
 
-    // r1 joined, LLM failed → break. r2/r3 must NOT be joined (FOR not burned).
+    // r1 joined, LLM failed → throw. r2/r3 must NOT be joined (FOR not burned).
     expect(client.joinChallengeRound).toHaveBeenCalledTimes(1);
     expect(client.submitChallengeAnswer).not.toHaveBeenCalled();
-    expect(mockUtils.log).toHaveBeenCalledWith(
-      expect.stringContaining("Inference unavailable"),
-    );
+    expect(ctx.inFlight.size).toBe(0);
   });
 
   it("filters out full rounds (slots_remaining = 0)", async () => {

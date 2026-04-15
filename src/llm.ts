@@ -250,6 +250,36 @@ export async function callLlm(
   return callLlmApi([{ role: "user", content: prompt }], retries, 0.3, signal, purpose);
 }
 
+/**
+ * Cheap health-check: sends a 1-token prompt with a short timeout, bypassing
+ * the semaphore and retry machinery. Returns `true` if the inference backend
+ * replied within the deadline, `false` otherwise (timeout, network error,
+ * auth error, model missing, etc.). Meant to gate worker cycles after a
+ * previous LLM failure so we don't burn FOR on unanswerable joins.
+ */
+export async function pingLlm(timeoutMs = 5000): Promise<boolean> {
+  const cfg = config.get();
+  const isLocal = cfg.inference_type === "self-hosted";
+  if (!isLocal && !cfg.openrouter_api_key) return false;
+
+  try {
+    const client = getClient();
+    await client.chat.completions.create(
+      {
+        model: cfg.model_name,
+        messages: [{ role: "user", content: "ok" }],
+        temperature: 0,
+        max_tokens: 1,
+      },
+      { signal: AbortSignal.timeout(timeoutMs), maxRetries: 0 },
+    );
+    return true;
+  } catch (err) {
+    verbose(`pingLlm failed: ${err}`);
+    return false;
+  }
+}
+
 export async function evaluateGoodEnough(
   problem: string,
   solution: string,

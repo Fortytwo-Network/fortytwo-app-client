@@ -72,16 +72,26 @@ vi.mock("../src/answering.js", () => ({
 
 vi.mock("../src/llm.js", () => ({
   isLlmBusy: vi.fn().mockReturnValue(false),
+  pingLlm: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("../src/setup-logic.js", () => ({
   validateModel: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
-vi.mock("../src/capability-challenge.js", () => ({
-  createChallengeContext: vi.fn(() => ({ client: {}, inFlight: new Set() })),
-  processChallengeRounds: vi.fn().mockResolvedValue(0),
-}));
+vi.mock("../src/capability-challenge.js", () => {
+  class LlmFailureError extends Error {
+    constructor(cause: Error) {
+      super(`LLM generation failed: ${cause.message}`);
+      this.name = "LlmFailureError";
+    }
+  }
+  return {
+    createChallengeContext: vi.fn(() => ({ client: {}, inFlight: new Set() })),
+    processChallengeRounds: vi.fn().mockResolvedValue(0),
+    LlmFailureError,
+  };
+});
 
 vi.mock("../src/utils.js", () => ({
   sleep: vi.fn().mockResolvedValue(undefined),
@@ -101,7 +111,7 @@ import {
   main,
 } from "../src/main.js";
 import { loadIdentity } from "../src/identity.js";
-import { isLlmBusy } from "../src/llm.js";
+import { isLlmBusy, pingLlm } from "../src/llm.js";
 import { secondsUntilDeadline, log } from "../src/utils.js";
 import { processChallengeRounds } from "../src/capability-challenge.js";
 
@@ -325,6 +335,44 @@ describe("main", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
     mockCfg.node_role = "JUDGE";
+  });
+
+  it("pauses worker after LlmFailureError and probes with ping before resuming", async () => {
+    mockClient.login.mockResolvedValue({});
+    vi.mocked(isLlmBusy).mockReturnValue(false);
+    mockClient.getCapability.mockResolvedValue(CHALLENGER);
+
+    // Cycle 1: runCycle throws LlmFailureError → inferenceDown = true.
+    // Cycle 2: ping returns false → skip work, inferenceDown stays true.
+    // Cycle 3: ping returns true → work resumes, we abort from inside runCycle.
+    const { LlmFailureError } = await import("../src/capability-challenge.js");
+    const { processChallengeRounds } = await import("../src/capability-challenge.js");
+
+    let cycleCount = 0;
+    const ac = new AbortController();
+    vi.mocked(processChallengeRounds).mockImplementation(async () => {
+      cycleCount++;
+      if (cycleCount === 1) throw new LlmFailureError(new Error("connection refused"));
+      if (cycleCount === 2) {
+        ac.abort();
+        return 0;
+      }
+      return 0;
+    });
+    vi.mocked(pingLlm)
+      .mockResolvedValueOnce(false)   // cycle 2 probe — still down
+      .mockResolvedValueOnce(true);   // cycle 3 probe — restored
+
+    mockClient.getBalance.mockResolvedValue({ available: "0", challenge_locked: "250" });
+
+    await main(ac.signal);
+
+    // processChallengeRounds called in cycles 1 and 3 (cycle 2 was skipped).
+    expect(processChallengeRounds).toHaveBeenCalledTimes(2);
+    expect(pingLlm).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Inference unavailable"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("still unavailable"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Inference restored"));
   });
 
   it("goes idle (warning log, no reset) when Capable has balance < min_balance", async () => {

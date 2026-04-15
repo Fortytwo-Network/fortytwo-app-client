@@ -5,12 +5,13 @@ import { FortyTwoClient } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
 import { judgeChallenge } from "./judging.js";
 import { answerQuery } from "./answering.js";
-import { isLlmBusy } from "./llm.js";
+import { isLlmBusy, pingLlm } from "./llm.js";
 import { validateModel } from "./setup-logic.js";
 import { viewerBus, type VisibleQuery } from "./event-bus.js";
 import {
   createChallengeContext,
   processChallengeRounds,
+  LlmFailureError,
   type ChallengeContext,
 } from "./capability-challenge.js";
 import type { CapabilityInfo } from "./api-types.js";
@@ -327,31 +328,52 @@ export async function main(signal?: AbortSignal): Promise<void> {
 
     log(`✓ Starting polling loop (interval: ${cfg.poll_interval}s)`);
     let cycles = 0;
+    // When the LLM fails mid-cycle we pause the worker until a cheap ping
+    // succeeds — otherwise we would keep staking FOR on rounds we can't answer.
+    let inferenceDown = false;
     while (!signal?.aborted) {
       const cycleStart = Date.now();
       try {
-        const available = await checkBalance(client);
-        const capability = await fetchCapability(client);
+        if (inferenceDown) {
+          log("Inference was down — probing with ping...");
+          if (await pingLlm()) {
+            log("✓ Inference restored, resuming work");
+            inferenceDown = false;
+          } else {
+            log("✕ Inference still unavailable — skipping cycle");
+          }
+        }
 
-        // `min_balance` gates Capable nodes (they spend `available` FOR to stake
-        // on queries/judgments). Challengers are funded from `challenge_locked`
-        // instead, so a zero `available` balance is expected and must not block
-        // their Capability Challenge participation.
-        if (capability.node_tier === "capable" && available < cfg.min_balance) {
-          const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
-          log(msg);
-          viewerBus.pushError(msg);
-        } else {
-          const count = await runCycle(client, capability, challengeCtx);
-          cycles++;
-          viewerBus.updateStats({ cycles });
-          if (count > 0) log(`Processed ${count} items this cycle`);
+        if (!inferenceDown) {
+          const available = await checkBalance(client);
+          const capability = await fetchCapability(client);
+
+          // `min_balance` gates Capable nodes (they spend `available` FOR to stake
+          // on queries/judgments). Challengers are funded from `challenge_locked`
+          // instead, so a zero `available` balance is expected and must not block
+          // their Capability Challenge participation.
+          if (capability.node_tier === "capable" && available < cfg.min_balance) {
+            const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
+            log(msg);
+            viewerBus.pushError(msg);
+          } else {
+            const count = await runCycle(client, capability, challengeCtx);
+            cycles++;
+            viewerBus.updateStats({ cycles });
+            if (count > 0) log(`Processed ${count} items this cycle`);
+          }
         }
       } catch (err) {
         if (signal?.aborted) return;
         const errMsg = (err as Error).message ?? String(err);
-        log(`Error in polling cycle: ${errMsg}`);
-        viewerBus.pushError(errMsg);
+        if (err instanceof LlmFailureError) {
+          inferenceDown = true;
+          log(`Inference unavailable — pausing worker until ping succeeds. (${errMsg})`);
+          viewerBus.pushError(`Inference unavailable: ${errMsg}`);
+        } else {
+          log(`Error in polling cycle: ${errMsg}`);
+          viewerBus.pushError(errMsg);
+        }
       }
 
       if (signal?.aborted) return;

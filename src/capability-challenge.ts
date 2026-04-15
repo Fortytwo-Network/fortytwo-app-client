@@ -17,9 +17,10 @@ const MIN_TIME_LEFT_MS = 30_000;
  * Raised when `llm.generateAnswer` fails after a successful join. Signals that
  * inference is unavailable, so the processing loop must stop — otherwise we
  * keep staking FOR on rounds we can't answer until `challenge_locked` is
- * drained into dead-lock.
+ * drained into dead-lock. Rethrown from `processChallengeRounds` so the main
+ * polling loop can gate subsequent cycles on a `pingLlm()` health check.
  */
-class LlmFailureError extends Error {
+export class LlmFailureError extends Error {
   constructor(cause: Error) {
     super(`LLM generation failed: ${cause.message}`);
     this.name = "LlmFailureError";
@@ -75,6 +76,9 @@ export async function processChallengeRounds(ctx: ChallengeContext): Promise<num
       const exitReason = classifyFatalError(err, msg);
       if (exitReason) {
         log(`${exitReason} — leaving the Capability Challenge loop.`);
+        ctx.inFlight.delete(round.id);
+        // LLM failures bubble up so the polling loop can ping before resuming.
+        if (err instanceof LlmFailureError) throw err;
         break;
       }
     } finally {

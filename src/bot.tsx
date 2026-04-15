@@ -8,7 +8,8 @@ import { setLogFn, setVerbose, log, sleep, formatNumber, truncateName, getRoleLa
 import { FortyTwoClient, ApiError } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
 import { runCycle, checkBalance, fetchCapability, initViewerBus } from "./main.js";
-import { createChallengeContext } from "./capability-challenge.js";
+import { createChallengeContext, LlmFailureError } from "./capability-challenge.js";
+import { pingLlm } from "./llm.js";
 import { getLlmStats } from "./llm.js";
 import { executeCommand, SUGGESTIONS } from "./commands.js";
 import { validateConfig, validateModel } from "./setup-logic.js";
@@ -336,35 +337,55 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
         const challengeCtx = createChallengeContext(c);
         let cycles = 0;
+        // Inference-down guard: skip cycles until a cheap ping succeeds.
+        let inferenceDown = false;
         while (!cancelled) {
           const cycleStart = Date.now();
           try {
-            const available = await checkBalance(c);
-            if (!cancelled) setBalance(available);
-            const capability = await fetchCapability(c);
-            if (!cancelled && capability) {
-              setCapabilityRank(capability.capability_rank);
-              setNodeTier(capability.node_tier);
-              setDeadLocked(capability.is_dead_locked);
+            if (inferenceDown) {
+              log("Inference was down — probing with ping...");
+              if (await pingLlm()) {
+                log("✓ Inference restored, resuming work");
+                inferenceDown = false;
+              } else {
+                log("✕ Inference still unavailable — skipping cycle");
+              }
             }
 
-            // `min_balance` gates Capable nodes only. Challengers are funded
-            // from `challenge_locked`, so a zero `available` is expected.
-            if (capability.node_tier === "capable" && available < cfg.min_balance) {
-              const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
-              log(`⚠ ${msg}`);
-              viewerBus.pushError(msg);
-            } else {
-              const count = await runCycle(c, capability, challengeCtx);
-              cycles++;
-              viewerBus.updateStats({ cycles });
-              if (count > 0) log(`✓ Processed ${count} items this cycle`);
+            if (!inferenceDown) {
+              const available = await checkBalance(c);
+              if (!cancelled) setBalance(available);
+              const capability = await fetchCapability(c);
+              if (!cancelled && capability) {
+                setCapabilityRank(capability.capability_rank);
+                setNodeTier(capability.node_tier);
+                setDeadLocked(capability.is_dead_locked);
+              }
+
+              // `min_balance` gates Capable nodes only. Challengers are funded
+              // from `challenge_locked`, so a zero `available` is expected.
+              if (capability.node_tier === "capable" && available < cfg.min_balance) {
+                const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
+                log(`⚠ ${msg}`);
+                viewerBus.pushError(msg);
+              } else {
+                const count = await runCycle(c, capability, challengeCtx);
+                cycles++;
+                viewerBus.updateStats({ cycles });
+                if (count > 0) log(`✓ Processed ${count} items this cycle`);
+              }
             }
           } catch (err) {
             if (cancelled) return;
             const errMsg = (err as Error).message ?? String(err);
-            log(`✕ Error in cycle: ${err}`);
-            viewerBus.pushError(errMsg);
+            if (err instanceof LlmFailureError) {
+              inferenceDown = true;
+              log(`⚠ Inference unavailable — pausing until ping succeeds. (${errMsg})`);
+              viewerBus.pushError(`Inference unavailable: ${errMsg}`);
+            } else {
+              log(`✕ Error in cycle: ${err}`);
+              viewerBus.pushError(errMsg);
+            }
           }
 
           if (cancelled) return;
