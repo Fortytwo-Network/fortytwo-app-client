@@ -13,6 +13,19 @@ const CHALLENGE_SYSTEM_PROMPT = [
 // Skip rounds whose deadline is closer than this — not enough time to generate + submit.
 const MIN_TIME_LEFT_MS = 30_000;
 
+/**
+ * Raised when `llm.generateAnswer` fails after a successful join. Signals that
+ * inference is unavailable, so the processing loop must stop — otherwise we
+ * keep staking FOR on rounds we can't answer until `challenge_locked` is
+ * drained into dead-lock.
+ */
+class LlmFailureError extends Error {
+  constructor(cause: Error) {
+    super(`LLM generation failed: ${cause.message}`);
+    this.name = "LlmFailureError";
+  }
+}
+
 export interface ChallengeContext {
   client: FortyTwoClient;
   inFlight: Set<string>;
@@ -56,11 +69,12 @@ export async function processChallengeRounds(ctx: ChallengeContext): Promise<num
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
       log(`[challenge ${round.id.slice(0, 8)}] failed: ${msg}`);
-      // Node just crossed into Capable mid-cycle — remaining rounds in this
-      // batch will all fail with the same tier check. Stop the loop so the
-      // next cycle can dispatch to queries/judgments.
-      if (isTierMismatchError(msg)) {
-        log("Reached Capability 42 — leaving the Capability Challenge loop.");
+
+      // Reasons to abort the whole batch — continuing would waste FOR or spam
+      // the server with doomed requests.
+      const exitReason = classifyFatalError(err, msg);
+      if (exitReason) {
+        log(`${exitReason} — leaving the Capability Challenge loop.`);
         break;
       }
     } finally {
@@ -70,9 +84,22 @@ export async function processChallengeRounds(ctx: ChallengeContext): Promise<num
   return attempted;
 }
 
-function isTierMismatchError(msg: string): boolean {
-  const m = msg.toLowerCase();
-  return m.includes("capable nodes cannot") || m.includes("capability challenge");
+/**
+ * Decide whether an error from `answerChallengeRound` should abort the whole
+ * batch. Returns a human-readable reason, or null to keep going.
+ */
+function classifyFatalError(err: unknown, msg: string): string | null {
+  if (err instanceof LlmFailureError) {
+    return "Inference unavailable (joins would burn FOR without answers)";
+  }
+  const lower = msg.toLowerCase();
+  if (lower.includes("capable nodes cannot") || lower.includes("reach capability")) {
+    return "Reached Capability 42";
+  }
+  if (lower.includes("insufficient for balance") || lower.includes("insufficient balance")) {
+    return "challenge_locked FOR exhausted";
+  }
+  return null;
 }
 
 async function answerChallengeRound(ctx: ChallengeContext, round: ChallengeRound): Promise<void> {
@@ -86,22 +113,22 @@ async function answerChallengeRound(ctx: ChallengeContext, round: ChallengeRound
 
   pinTask(round.id, `Challenge ${tag}`);
   try {
-    // Step 1: Join the round (stakes FOR, reveals content).
-    let content: string;
-    if (round.has_joined && round.content) {
-      content = round.content;
-    } else {
-      viewerBus.setState("JOINING");
-      log(`[challenge ${tag}] joining round...`);
-      const joined = await ctx.client.joinChallengeRound(round.id);
-      content = joined.content;
-      log(`[challenge ${tag}] ✓ joined (staked ${joined.stake_amount} FOR)`);
-    }
+    // Step 1: Obtain puzzle content. Listing doesn't carry `content`; detail
+    // does (for users who have already joined) and `joinChallengeRound`
+    // returns it directly for fresh joins.
+    const content = await obtainContent(ctx, round, tag);
 
-    // Step 2: Generate answer via LLM.
+    // Step 2: Generate answer via LLM. Wrap in a dedicated error type so the
+    // batch loop can detect and abort — we must not keep joining rounds when
+    // inference is dead.
     viewerBus.setState("THINKING");
     log(`[challenge ${tag}] answering puzzle...`);
-    const answer = await llm.generateAnswer(CHALLENGE_SYSTEM_PROMPT, content);
+    let answer: string;
+    try {
+      answer = await llm.generateAnswer(CHALLENGE_SYSTEM_PROMPT, content);
+    } catch (err) {
+      throw new LlmFailureError(err as Error);
+    }
 
     // Step 3: Submit.
     viewerBus.setState("SUBMITTING");
@@ -109,5 +136,43 @@ async function answerChallengeRound(ctx: ChallengeContext, round: ChallengeRound
     log(`[challenge ${tag}] ✓ submitted`);
   } finally {
     unpinTask(round.id);
+  }
+}
+
+async function obtainContent(
+  ctx: ChallengeContext,
+  round: ChallengeRound,
+  tag: string,
+): Promise<string> {
+  // Already joined in a previous cycle — no need to stake again, just fetch
+  // the round detail (server returns `content` for participants).
+  if (round.has_joined) {
+    log(`[challenge ${tag}] already joined — fetching content...`);
+    const detail = await ctx.client.getChallengeRound(round.id);
+    if (!detail.content) {
+      throw new Error(`Round detail is missing content despite has_joined=true`);
+    }
+    return detail.content;
+  }
+
+  viewerBus.setState("JOINING");
+  log(`[challenge ${tag}] joining round...`);
+  try {
+    const joined = await ctx.client.joinChallengeRound(round.id);
+    log(`[challenge ${tag}] ✓ joined (staked ${joined.stake_amount} FOR)`);
+    return joined.content;
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    // Race: listing said has_joined=false, server says we already joined.
+    // Fetch detail instead of double-staking.
+    if (/already joined/i.test(msg)) {
+      log(`[challenge ${tag}] join race — fetching content from detail...`);
+      const detail = await ctx.client.getChallengeRound(round.id);
+      if (!detail.content) {
+        throw new Error(`Round detail is missing content after already-joined fallback`);
+      }
+      return detail.content;
+    }
+    throw err;
   }
 }

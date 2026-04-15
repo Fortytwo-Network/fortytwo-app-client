@@ -71,6 +71,10 @@ function makeClient(partial: Record<string, any> = {}) {
     listActiveChallengeRounds: vi.fn().mockResolvedValue({
       items: [], total: 0, page: 1, page_size: 20,
     }),
+    getChallengeRound: vi.fn().mockResolvedValue({
+      id: "round-aaaaaaaa",
+      content: "Detail question?",
+    }),
     joinChallengeRound: vi.fn().mockResolvedValue({
       id: "round-aaaaaaaa",
       content: "Is sky blue?",
@@ -200,11 +204,14 @@ describe("processChallengeRounds", () => {
     expect(ctx.inFlight.size).toBe(0);
   });
 
-  it("uses cached content when already joined", async () => {
-    const round = buildRound({ has_joined: true, content: "Cached question" });
+  it("fetches content via getChallengeRound when already joined (no re-stake)", async () => {
+    const round = buildRound({ has_joined: true });
     const client = makeClient({
       listActiveChallengeRounds: vi.fn().mockResolvedValue({
         items: [round], total: 1, page: 1, page_size: 20,
+      }),
+      getChallengeRound: vi.fn().mockResolvedValue({
+        id: round.id, content: "Resumed question",
       }),
     });
     const ctx = createChallengeContext(client);
@@ -212,9 +219,79 @@ describe("processChallengeRounds", () => {
     await processChallengeRounds(ctx);
 
     expect(client.joinChallengeRound).not.toHaveBeenCalled();
+    expect(client.getChallengeRound).toHaveBeenCalledWith(round.id);
     expect(mockLlm.generateAnswer).toHaveBeenCalledWith(
       expect.any(String),
-      "Cached question",
+      "Resumed question",
+    );
+    expect(client.submitChallengeAnswer).toHaveBeenCalled();
+  });
+
+  it("falls back to detail on 'Already joined' race", async () => {
+    const round = buildRound({ has_joined: false });
+    const client = makeClient({
+      listActiveChallengeRounds: vi.fn().mockResolvedValue({
+        items: [round], total: 1, page: 1, page_size: 20,
+      }),
+      joinChallengeRound: vi.fn().mockRejectedValue(new Error("Already joined this round")),
+      getChallengeRound: vi.fn().mockResolvedValue({ id: round.id, content: "Race content" }),
+    });
+    const ctx = createChallengeContext(client);
+
+    await processChallengeRounds(ctx);
+
+    expect(client.joinChallengeRound).toHaveBeenCalledTimes(1);
+    expect(client.getChallengeRound).toHaveBeenCalledWith(round.id);
+    expect(mockLlm.generateAnswer).toHaveBeenCalledWith(
+      expect.any(String),
+      "Race content",
+    );
+    expect(client.submitChallengeAnswer).toHaveBeenCalled();
+  });
+
+  it("breaks the loop on Insufficient FOR balance (stops wasting requests)", async () => {
+    const r1 = buildRound({ id: "r1" });
+    const r2 = buildRound({ id: "r2" });
+    const r3 = buildRound({ id: "r3" });
+    const client = makeClient({
+      listActiveChallengeRounds: vi.fn().mockResolvedValue({
+        items: [r1, r2, r3], total: 3, page: 1, page_size: 20,
+      }),
+      joinChallengeRound: vi.fn()
+        .mockResolvedValueOnce({ content: "Q1", stake_amount: "10" })
+        .mockRejectedValueOnce(new Error("Insufficient FOR balance: need 10, have 0")),
+    });
+    const ctx = createChallengeContext(client);
+
+    await processChallengeRounds(ctx);
+
+    // r1 joined+answered; r2 join failed → break; r3 untouched.
+    expect(client.joinChallengeRound).toHaveBeenCalledTimes(2);
+    expect(client.submitChallengeAnswer).toHaveBeenCalledTimes(1);
+    expect(mockUtils.log).toHaveBeenCalledWith(
+      expect.stringContaining("challenge_locked FOR exhausted"),
+    );
+  });
+
+  it("breaks the loop on LLM failure (prevents staking on unanswerable rounds)", async () => {
+    const r1 = buildRound({ id: "r1" });
+    const r2 = buildRound({ id: "r2" });
+    const r3 = buildRound({ id: "r3" });
+    const client = makeClient({
+      listActiveChallengeRounds: vi.fn().mockResolvedValue({
+        items: [r1, r2, r3], total: 3, page: 1, page_size: 20,
+      }),
+    });
+    mockLlm.generateAnswer.mockRejectedValueOnce(new Error("Connection refused — local inference down"));
+    const ctx = createChallengeContext(client);
+
+    await processChallengeRounds(ctx);
+
+    // r1 joined, LLM failed → break. r2/r3 must NOT be joined (FOR not burned).
+    expect(client.joinChallengeRound).toHaveBeenCalledTimes(1);
+    expect(client.submitChallengeAnswer).not.toHaveBeenCalled();
+    expect(mockUtils.log).toHaveBeenCalledWith(
+      expect.stringContaining("Inference unavailable"),
     );
   });
 
@@ -282,6 +359,25 @@ describe("processChallengeRounds", () => {
     expect(mockUtils.log).toHaveBeenCalledWith(
       expect.stringContaining("Reached Capability 42"),
     );
+  });
+
+  it("breaks on tier-mismatch error message from join", async () => {
+    const r1 = buildRound({ id: "r1" });
+    const r2 = buildRound({ id: "r2" });
+    const client = makeClient({
+      listActiveChallengeRounds: vi.fn().mockResolvedValue({
+        items: [r1, r2], total: 2, page: 1, page_size: 20,
+      }),
+      joinChallengeRound: vi.fn().mockRejectedValue(
+        new Error("Capable nodes cannot participate in Capability Challenge rounds"),
+      ),
+    });
+    const ctx = createChallengeContext(client);
+
+    await processChallengeRounds(ctx);
+
+    expect(client.joinChallengeRound).toHaveBeenCalledTimes(1);
+    expect(client.submitChallengeAnswer).not.toHaveBeenCalled();
   });
 
   it("propagates listActiveChallengeRounds errors", async () => {
