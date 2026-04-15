@@ -518,12 +518,11 @@ Usage:
   fortytwo version                  Show version
 
 Setup flags:
-  --node-name NAME         Node local name
+  --node-name NAME         Local name for the node profile (e.g. "my-judge")
   --inference-type TYPE    openrouter | self-hosted
   --openrouter-api-key KEY OpenRouter API key
   --model-name NAME        Model name
   --self-hosted-api-base URL Local inference URL
-  --node-name NAME         Local name for the node profile (e.g. "my-judge")
   --node-role ROLE         JUDGE | ANSWERER | ANSWERER_AND_JUDGE
   --skip-validation        Skip model validation
 
