@@ -105,9 +105,10 @@ interface OnboardProps {
   onDone: () => void;
   skipToRegistration?: boolean;
   onCancel?: () => void;
+  onStepChange?: (step: { current: number; total: number; label: string } | null) => void;
 }
 
-export default function Onboard({ onDone, skipToRegistration, onCancel }: OnboardProps) {
+export default function Onboard({ onDone, skipToRegistration, onCancel, onStepChange }: OnboardProps) {
   const [stepIdx, setStepIdx] = useState(0);
   const [values, setValues] = useState<Record<string, string>>({});
   const [inferenceType, setInferenceType] = useState<InferenceType | undefined>();
@@ -126,6 +127,21 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
   const canGoBack = stepIdx > 0;
+
+  useEffect(() => {
+    if (!onStepChange) return;
+    if (!step) {
+      onStepChange(null);
+      return;
+    }
+    onStepChange({
+      current: stepIdx + 1,
+      total: steps.length,
+      label: step.label.toUpperCase(),
+    });
+  }, [onStepChange, stepIdx, step?.label, steps.length]);
+
+  useEffect(() => () => onStepChange?.(null), [onStepChange]);
 
   function goBack() {
     if (!canGoBack) return;
@@ -407,9 +423,6 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   if (phase === "validating_creds") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>
-          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
-        </Text>
         <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking credentials...</Text>
       </Box>
     );
@@ -418,9 +431,6 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   if (phase === "fetching_models") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>
-          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
-        </Text>
         <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking connection and fetching models...</Text>
       </Box>
     );
@@ -429,9 +439,6 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   if (phase === "validating") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>
-          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
-        </Text>
         <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking model...</Text>
       </Box>
     );
@@ -443,7 +450,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Text bold>▒▓░ {header} ░▓▒</Text>
+        <Text color={COLORS.BLUE_CONTENT} bold>{header}</Text>
         {regLog.length === 0 && <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> ⎔ Registering Node...</Text>}
         <Box flexDirection="column">
           {regLog.map((line, i) => {
@@ -462,18 +469,9 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Text>
-        STEP {stepIdx + 1}/{steps.length}
-      </Text>
-
       {validationError && (
         <Text color={COLORS.RED}>{validationError}</Text>
       )}
-
-      <Text>
-        {step!.label}
-        {step!.placeholder ? <Text color={COLORS.GREY_NEUTRAL}> ({step!.placeholder})</Text> : null}
-      </Text>
 
       {isModelAutocomplete ? (() => {
         const MAX_SHOWN = 5;

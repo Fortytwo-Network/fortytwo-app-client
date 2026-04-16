@@ -15,6 +15,7 @@ import { executeCommand, SUGGESTIONS } from "./commands.js";
 import { validateConfig, validateModel } from "./setup-logic.js";
 import { viewerBus } from "./event-bus.js";
 import { checkForUpdate, UPDATE_COMMAND } from "./update-check.js";
+import { LogoMark } from "./logo-mark.js";
 
 import pkg from "../package.json" with { type: "json" };
 
@@ -36,22 +37,57 @@ type AgentProfile = {
 
 const VERSION = pkg.version;
 
-const LOGO = [
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-  " ░████▓░ ░████▓░  ░████▓░ ░████▓░",
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-  "                  ░████▓░ ░████▓░",
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-  " ░████▓░ ░████▓░  ░████▓░ ░████▓░",
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-];
-
 const MAX_LINES = 200;
-// frame header(1) + empty(1) + logo(7) + empty(1) + frame footer(1) + gap(1) + separator(1) + prompt+footer(1) + gaps
-const CHROME_LINES = 14;
+// Header + metrics + separator + prompt + footer.
+const CHROME_LINES = 16;
 
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + " ".repeat(len - str.length);
+function formatCapabilityRank(value: number | null): string {
+  if (value === null) return "—";
+  const fixed = value.toFixed(4);
+  return fixed.replace(/\.?0+$/, "");
+}
+
+function buildCapabilityBar(value: number | null, total = 42): string {
+  if (value === null) return `[${"·".repeat(total)}]`;
+
+  const clamped = Math.max(0, Math.min(value, total));
+  const full = Math.floor(clamped);
+  const fractional = clamped - full;
+  const partial = fractional <= 0
+    ? ""
+    : fractional <= 0.5
+      ? "░"
+      : "▒";
+  const empty = Math.max(0, total - full - (partial ? 1 : 0));
+  return `[${"█".repeat(full)}${partial}${"·".repeat(empty)}]`;
+}
+
+function fitLine(base: string, termCols: number, reserve = 0): string {
+  const max = Math.max(10, termCols - reserve);
+  if (base.length <= max) return base;
+  if (max <= 3) return base.slice(0, max);
+  return `${base.slice(0, max - 3)}...`;
+}
+
+function padCell(label: string, value: string, width: number): string {
+  const cell = `${label} ${value}`;
+  return cell.length >= width ? `${cell} ` : `${cell}${" ".repeat(width - cell.length)}`;
+}
+
+function makeColumnParts(
+  left: string,
+  right: string,
+  totalWidth: number,
+  leftWidth: number,
+): { left: string; right: string } {
+  const safeTotal = Math.max(20, totalWidth);
+  const safeLeft = Math.max(10, Math.min(leftWidth, safeTotal - 6));
+  const safeRight = Math.max(5, safeTotal - safeLeft - 1);
+
+  const leftPart = fitLine(left, safeLeft);
+  const rightPart = fitLine(right, safeRight);
+  const gap = Math.max(1, safeLeft - leftPart.length + 1);
+  return { left: `${leftPart}${" ".repeat(gap)}`, right: rightPart };
 }
 
 interface BotScreenProps {
@@ -70,6 +106,8 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const [capabilityRank, setCapabilityRank] = useState<number | null>(null);
   const [nodeTier, setNodeTier] = useState<"challenger" | "capable" | null>(null);
   const [deadLocked, setDeadLocked] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<"RUNNING" | "STOPPED">("STOPPED");
+  const [activeDot, setActiveDot] = useState(-1);
   const [llmActive, setLlmActive] = useState(0);
   const [stats, setStats] = useState<AgentStats | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
@@ -95,6 +133,19 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   }, []);
 
   const [client, setClient] = useState<FortyTwoClient | null>(null);
+
+  useEffect(() => {
+    if (runtimeStatus !== "RUNNING") {
+      setActiveDot(-1);
+      return;
+    }
+
+    setActiveDot(0);
+    const id = setInterval(() => {
+      setActiveDot((prev) => (prev + 1) % 4);
+    }, 230);
+    return () => clearInterval(id);
+  }, [runtimeStatus]);
 
   const handleCommand = useCallback((input: string) => {
     const raw = input.trim();
@@ -303,6 +354,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         const cfg = getConfig();
         const identity = loadIdentity(cfg.node_identity_file);
         if (!identity) {
+          setRuntimeStatus("STOPPED");
           setError("No identity found. Run onboarding first.");
           return;
         }
@@ -310,22 +362,23 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         // Validate config before proceeding
         const cfgCheck = validateConfig(cfg as unknown as Record<string, string>);
         if (!cfgCheck.ok) {
+          setRuntimeStatus("STOPPED");
           setError(`Config error: ${cfgCheck.error}`);
           return;
         }
 
-        log("Validating model...");
         const modelCheck = await validateModel(cfg as unknown as Record<string, string>);
         if (!modelCheck.ok) {
+          setRuntimeStatus("STOPPED");
           setError(`Config error: ${modelCheck.error}`);
           return;
         }
-        log("✓ Configuration valid");
 
         viewerBus.setState("AUTHENTICATING");
         const c = new FortyTwoClient();
         await c.login(identity.node_id, identity.node_secret);
         setClient(c);
+        setRuntimeStatus("RUNNING");
 
         const name = cfg.node_name || cfg.node_display_name || "Agent";
         setAgentName(name);
@@ -347,12 +400,15 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
               if (await pingLlm()) {
                 log("✓ Inference restored, resuming work");
                 inferenceDown = false;
+                setRuntimeStatus("RUNNING");
               } else {
                 log("✕ Inference still unavailable — skipping cycle");
+                setRuntimeStatus("STOPPED");
               }
             }
 
             if (!inferenceDown) {
+              setRuntimeStatus("RUNNING");
               const available = await checkBalance(c);
               if (!cancelled) setBalance(available);
               const capability = await fetchCapability(c);
@@ -380,9 +436,11 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
             const errMsg = (err as Error).message ?? String(err);
             if (err instanceof LlmFailureError) {
               inferenceDown = true;
+              setRuntimeStatus("STOPPED");
               log(`⚠ Inference unavailable — pausing until ping succeeds. (${errMsg})`);
               viewerBus.pushError(`Inference unavailable: ${errMsg}`);
             } else {
+              setRuntimeStatus("STOPPED");
               log(`✕ Error in cycle: ${err}`);
               viewerBus.pushError(errMsg);
             }
@@ -406,11 +464,13 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         }
       } catch (err) {
         if (!cancelled) {
+          setRuntimeStatus("STOPPED");
           setError(String(err));
           viewerBus.setState("ERROR");
           viewerBus.pushError(String(err));
         }
       } finally {
+        setRuntimeStatus("STOPPED");
         viewerBus.setRunning(false);
       }
     })();
@@ -430,7 +490,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
     ? `Self-hosted ${cfg.self_hosted_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}`
     : "OpenRouter";
 
-  const displayName = truncateName(agentName.toUpperCase());
+  const displayName = truncateName(agentName.toUpperCase(), 44);
   const intScore = profile ? formatNumber(profile.intelligenceScore, 4) : "—";
   const jdgScore = profile ? formatNumber(profile.judgingScore, 3) : "—";
 
@@ -446,25 +506,39 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const jRateStr = stats ? `${Math.round(stats.accuracy)}%` : "—";
   const balStr = balance !== null ? formatNumber(balance) : "—";
   const stakedStr = staked !== null ? formatNumber(staked) : "—";
-  const lockedStr = challengeLocked !== null ? formatNumber(challengeLocked) : "—";
-  const tierStr = nodeTier
-    ? nodeTier === "capable"
-      ? "Capable"
-      : capabilityRank !== null
-        ? `Challenger (${capabilityRank}/42)`
-        : "Challenger"
-    : "—";
-  const tierColor = nodeTier === "capable" ? COLORS.BLUE_CONTENT : COLORS.GREY_LIGHT;
-
-  // Progress bar for capability rank. Full at 42, hidden before capability is
-  // fetched. Width 16 cells.
-  const PROGRESS_WIDTH = 16;
-  const progressBar = capabilityRank !== null
-    ? (() => {
-        const filled = Math.round((Math.min(capabilityRank, 42) / 42) * PROGRESS_WIDTH);
-        return "█".repeat(filled) + "░".repeat(PROGRESS_WIDTH - filled);
-      })()
-    : null;
+  const panelWidth = Math.max(40, termCols - 8);
+  const columnLeftWidth = Math.min(40, Math.max(28, Math.floor(panelWidth * 0.55)));
+  const capRankStr = `${formatCapabilityRank(capabilityRank)}/42`;
+  const capBar = buildCapabilityBar(capabilityRank, 42);
+  const tierTitle = nodeTier === "capable"
+    ? "CAPABLE TIER"
+    : nodeTier === "challenger"
+      ? "CHALLENGER TIER"
+      : "NODE TIER";
+  const tierDetail = nodeTier === "capable"
+    ? `INT ${intScore} · JDG ${jdgScore}`
+    : nodeTier === "challenger"
+      ? "PASS CAPABILITY CHALLENGE, UNLOCK FULL FUNCTIONALITY"
+      : "INITIALIZING";
+  const tierColor = nodeTier === "capable" ? COLORS.WHITE : COLORS.GREY_LIGHT;
+  const tierTitleColor = nodeTier === "capable" ? COLORS.BLUE_CONTENT : COLORS.WHITE;
+  const statusTag = runtimeStatus === "STOPPED" ? "STOPPED" : "";
+  const leftQ = `${padCell("Q", qStr, 12)}${padCell("fin", finStr, 12)}`;
+  const leftA = `${padCell("A", aStr, 12)}${padCell("won", aWonStr, 12)}rate ${aRateStr}`;
+  const leftJ = `${padCell("J", jStr, 12)}${padCell("won", jWonStr, 12)}rate ${jRateStr}`;
+  const scoreLine1 = makeColumnParts(leftQ, providerStr, panelWidth, columnLeftWidth);
+  const scoreLine2 = makeColumnParts(leftA, cfg.model_name, panelWidth, columnLeftWidth);
+  const scoreLine3 = makeColumnParts(
+    leftJ,
+    `Poll ${cfg.poll_interval}s  Concurrency ${llmActive}/${cfg.llm_concurrency}`,
+    panelWidth,
+    columnLeftWidth,
+  );
+  const capBarDisplay = fitLine(
+    capBar,
+    panelWidth - (statusTag ? statusTag.length + 1 : 0) - capRankStr.length - 1,
+  );
+  const watchUrl = "http://127.0.0.1:4242/";
 
   const versionText = ` App Fortytwo Client v${VERSION} ──`;
   const centerMarker = " ::|| ";
@@ -475,32 +549,62 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
   return (
     <Box flexDirection="column">
-      <Text color={COLORS.BLUE_FRAME} bold>╔═════════ <Text color={COLORS.WHITE} bold>{displayName}</Text> <Text color={COLORS.GREY_LIGHT}><Text color={COLORS.BLUE_CONTENT}>·</Text> INT {intScore} <Text color={COLORS.BLUE_CONTENT}>·</Text> JDG {jdgScore}</Text></Text>
-      <Text color={COLORS.BLUE_FRAME} bold>║</Text>
       <Box>
-        <Box flexDirection="column">
-          {LOGO.map((line, i) => (
-            <Text key={i}><Text color={COLORS.BLUE_FRAME} bold>║</Text> {line}</Text>
-          ))}
-        </Box>
-        <Box flexDirection="column" marginLeft={2}>
-          <Text color={COLORS.BLUE_CONTENT}>{providerStr}</Text>
-          <Text color={COLORS.GREY_LIGHT}>{cfg.model_name}</Text>
-          <Text><Text color={COLORS.BLUE_CONTENT}>Poll</Text> <Text color={COLORS.GREY_LIGHT}>{cfg.poll_interval}s</Text> <Text color={COLORS.GREY_LIGHT}>·</Text> <Text color={COLORS.BLUE_CONTENT}>Concurrency</Text> <Text color={COLORS.GREY_LIGHT}>{llmActive}/{cfg.llm_concurrency}</Text></Text>
-          <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`Q ${qStr}`, 14)}{padRight(`fin ${finStr}`, 14)}</Text></Text>
-          <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`A ${aStr}`, 14)}{padRight(`won ${aWonStr}`, 14)}{`rate ${aRateStr}`}</Text></Text>
-          <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`J ${jStr}`, 14)}{padRight(`won ${jWonStr}`, 14)}{`rate ${jRateStr}`}</Text></Text>
-          <Text><Text color={COLORS.BLUE_CONTENT} bold>FOR</Text> <Text bold>{balStr}</Text>  <Text color={COLORS.GREY_LIGHT}>locked <Text color={COLORS.WHITE}>{lockedStr}</Text> · staked <Text color={COLORS.WHITE}>{stakedStr}</Text></Text></Text>
-          <Text><Text color={COLORS.BLUE_CONTENT} bold>Tier</Text> <Text color={tierColor} bold>{tierStr}</Text></Text>
-          {progressBar !== null && (
-            <Text><Text color={COLORS.BLUE_CONTENT}>Cap</Text>  <Text color={COLORS.GREY_LIGHT}>[</Text><Text color={nodeTier === "capable" ? COLORS.BLUE_CONTENT : COLORS.WHITE}>{progressBar}</Text><Text color={COLORS.GREY_LIGHT}>]</Text> <Text color={COLORS.GREY_LIGHT}>{capabilityRank}/42</Text></Text>
-          )}
+        <LogoMark tier={nodeTier} activeDot={activeDot} height={10} />
+        <Box flexDirection="column" marginLeft={1}>
+          <Text bold wrap="truncate-end">
+            <Text color={COLORS.WHITE}>{fitLine(`${displayName} · ${roleDisplay}`, panelWidth)}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={tierTitleColor} bold>{tierTitle}</Text>
+            <Text color={tierColor}> · {fitLine(tierDetail, panelWidth - tierTitle.length - 3)}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            {statusTag ? <Text color={COLORS.RED} bold>{statusTag} </Text> : null}
+            <Text color={COLORS.BLUE_FRAME}>{capBarDisplay}</Text>
+            <Text color={COLORS.WHITE}> {capRankStr}</Text>
+          </Text>
+          <Text> </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine1.left}</Text>
+            <Text color={COLORS.BLUE_FRAME}>{scoreLine1.right}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine2.left}</Text>
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine2.right}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine3.left}</Text>
+            {(() => {
+              const parsed = scoreLine3.right.match(/^Poll\s+(\S+)\s+Concurrency\s+(\S+)$/);
+              if (!parsed) {
+                return <Text color={COLORS.BLUE_FRAME}>{scoreLine3.right}</Text>;
+              }
+              return (
+                <>
+                  <Text color={COLORS.BLUE_FRAME}>Poll </Text>
+                  <Text color={COLORS.WHITE}>{parsed[1]}</Text>
+                  <Text color={COLORS.BLUE_FRAME}>  Concurrency </Text>
+                  <Text color={COLORS.WHITE}>{parsed[2]}</Text>
+                </>
+              );
+            })()}
+          </Text>
+          <Text> </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.BLUE_FRAME} bold>FOR</Text>
+            <Text color={COLORS.WHITE}> {balStr}</Text>
+            <Text color={COLORS.GREY_LIGHT}> staked</Text>
+            <Text color={COLORS.WHITE}> {stakedStr}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.BLUE_FRAME}>WATCH YOUR NODE:</Text>
+            <Text color={COLORS.WHITE}> {watchUrl}</Text>
+          </Text>
+          <Text color={COLORS.GREY_DARK} wrap="truncate-end">{fitLine("", panelWidth)}</Text>
         </Box>
       </Box>
-
-      <Text color={COLORS.BLUE_FRAME} bold>║</Text>
-      <Text color={COLORS.BLUE_FRAME}>╚═════════ <Text color={COLORS.WHITE}>{roleDisplay} <Text color={COLORS.BLUE_CONTENT}>| WATCH YOUR NODE:</Text> <Text color={COLORS.WHITE}>http://127.0.0.1:4242</Text></Text></Text>
-      <Box flexDirection="column" height={visibleCount}>
+      <Box flexDirection="column" height={visibleCount} marginTop={1}>
         {visible.map((line, i) => {
           const globalIdx = offset + i;
           const isCurrent = globalIdx === last && line.trim() !== "";
