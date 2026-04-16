@@ -106,13 +106,22 @@ interface OnboardProps {
   skipToRegistration?: boolean;
   onCancel?: () => void;
   onStepChange?: (step: { current: number; total: number; label: string } | null) => void;
+  initialSetupMode?: "new" | "import";
 }
 
-export default function Onboard({ onDone, skipToRegistration, onCancel, onStepChange }: OnboardProps) {
-  const [stepIdx, setStepIdx] = useState(0);
-  const [values, setValues] = useState<Record<string, string>>({});
+export default function Onboard({
+  onDone,
+  skipToRegistration,
+  onCancel,
+  onStepChange,
+  initialSetupMode,
+}: OnboardProps) {
+  const [stepIdx, setStepIdx] = useState(initialSetupMode ? 1 : 0);
+  const [values, setValues] = useState<Record<string, string>>(
+    initialSetupMode ? { setup_mode: initialSetupMode } : {},
+  );
   const [inferenceType, setInferenceType] = useState<InferenceType | undefined>();
-  const [setupMode, setSetupMode] = useState<string | undefined>();
+  const [setupMode, setSetupMode] = useState<string | undefined>(initialSetupMode);
   const [phase, setPhase] = useState<Phase>(skipToRegistration ? "registering" : "input");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [regLog, setRegLog] = useState<string[]>([]);

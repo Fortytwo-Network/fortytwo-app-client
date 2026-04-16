@@ -15,7 +15,7 @@ import { executeCommand, SUGGESTIONS } from "./commands.js";
 import { validateConfig, validateModel } from "./setup-logic.js";
 import { viewerBus } from "./event-bus.js";
 import { checkForUpdate, UPDATE_COMMAND } from "./update-check.js";
-import { LogoMark } from "./logo-mark.js";
+import { LogoMark, LOGO_DOT_FRAME_COUNT } from "./logo-mark.js";
 
 import pkg from "../package.json" with { type: "json" };
 
@@ -142,7 +142,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
     setActiveDot(0);
     const id = setInterval(() => {
-      setActiveDot((prev) => (prev + 1) % 4);
+      setActiveDot((prev) => (prev + 1) % LOGO_DOT_FRAME_COUNT);
     }, 230);
     return () => clearInterval(id);
   }, [runtimeStatus]);
@@ -508,8 +508,11 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const stakedStr = staked !== null ? formatNumber(staked) : "—";
   const panelWidth = Math.max(40, termCols - 8);
   const columnLeftWidth = Math.min(40, Math.max(28, Math.floor(panelWidth * 0.55)));
-  const capRankStr = `${formatCapabilityRank(capabilityRank)}/42`;
+  const capRankValue = formatCapabilityRank(capabilityRank);
+  const capRankSuffix = "/42";
+  const capRankStr = `${capRankValue}${capRankSuffix}`;
   const capBar = buildCapabilityBar(capabilityRank, 42);
+  const headerDisplay = fitLine(`${displayName} · ${roleDisplay}`, panelWidth);
   const tierTitle = nodeTier === "capable"
     ? "CAPABLE TIER"
     : nodeTier === "challenger"
@@ -540,10 +543,9 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   );
   const watchUrl = "http://127.0.0.1:4242/";
 
-  const versionText = ` App Fortytwo Client v${VERSION} ──`;
-  const centerMarker = " ::|| ";
-  const leftDashes = Math.floor((termCols - centerMarker.length) / 2);
-  const rightTotal = termCols - leftDashes - centerMarker.length;
+  const versionText = ` Node Fortytwo v${VERSION} ──`;
+  const leftDashes = Math.floor((termCols) / 2);
+  const rightTotal = termCols - leftDashes;
   const rightDashes = Math.max(0, rightTotal - versionText.length);
   const topSep = "─".repeat(termCols);
 
@@ -553,21 +555,49 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         <LogoMark tier={nodeTier} activeDot={activeDot} height={10} />
         <Box flexDirection="column" marginLeft={1}>
           <Text bold wrap="truncate-end">
-            <Text color={COLORS.WHITE}>{fitLine(`${displayName} · ${roleDisplay}`, panelWidth)}</Text>
+            {(() => {
+              const dot = " · ";
+              const dotIdx = headerDisplay.indexOf(dot);
+              if (dotIdx < 0) {
+                return <Text color={COLORS.WHITE}>{headerDisplay}</Text>;
+              }
+              const left = headerDisplay.slice(0, dotIdx);
+              const right = headerDisplay.slice(dotIdx + dot.length);
+              return (
+                <>
+                  <Text color={COLORS.WHITE}>{left}</Text>
+                  <Text color={COLORS.BLUE_FRAME}>{dot}</Text>
+                  <Text color={COLORS.WHITE}>{right}</Text>
+                </>
+              );
+            })()}
           </Text>
           <Text wrap="truncate-end">
             <Text color={tierTitleColor} bold>{tierTitle}</Text>
-            <Text color={tierColor}> · {fitLine(tierDetail, panelWidth - tierTitle.length - 3)}</Text>
+            <Text color={COLORS.BLUE_FRAME}> · </Text>
+            <Text color={tierColor}>{fitLine(tierDetail, panelWidth - tierTitle.length - 3)}</Text>
           </Text>
           <Text wrap="truncate-end">
-            {statusTag ? <Text color={COLORS.RED} bold>{statusTag} </Text> : null}
+            {statusTag ? <Text color={COLORS.RED}>{statusTag} </Text> : null}
             <Text color={COLORS.BLUE_FRAME}>{capBarDisplay}</Text>
-            <Text color={COLORS.WHITE}> {capRankStr}</Text>
+            <Text color={COLORS.WHITE}> {capRankValue}</Text>
+            <Text color={COLORS.GREY_LIGHT}>{capRankSuffix}</Text>
           </Text>
           <Text> </Text>
           <Text wrap="truncate-end">
             <Text color={COLORS.GREY_LIGHT}>{scoreLine1.left}</Text>
-            <Text color={COLORS.BLUE_FRAME}>{scoreLine1.right}</Text>
+            {(() => {
+              const parsed = scoreLine1.right.match(/^(Self-hosted)\s+(.+)$/);
+              if (!parsed) {
+                return <Text color={COLORS.BLUE_FRAME}>{scoreLine1.right}</Text>;
+              }
+              return (
+                <>
+                  <Text color={COLORS.BLUE_FRAME}>{parsed[1]} </Text>
+                  <Text color={COLORS.GREY_LIGHT}>{parsed[2]}</Text>
+                </>
+              );
+            })()}
           </Text>
           <Text wrap="truncate-end">
             <Text color={COLORS.GREY_LIGHT}>{scoreLine2.left}</Text>
@@ -583,9 +613,9 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
               return (
                 <>
                   <Text color={COLORS.BLUE_FRAME}>Poll </Text>
-                  <Text color={COLORS.WHITE}>{parsed[1]}</Text>
+                  <Text color={COLORS.GREY_LIGHT}>{parsed[1]}</Text>
                   <Text color={COLORS.BLUE_FRAME}>  Concurrency </Text>
-                  <Text color={COLORS.WHITE}>{parsed[2]}</Text>
+                  <Text color={COLORS.GREY_LIGHT}>{parsed[2]}</Text>
                 </>
               );
             })()}
@@ -631,7 +661,6 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
       <Text>
         <Text color={COLORS.GREY_DARK}>{"─".repeat(leftDashes)}</Text>
-        <Text color={COLORS.WHITE}>{centerMarker}</Text>
         <Text color={COLORS.GREY_DARK}>{"─".repeat(rightDashes)}{versionText}</Text>
       </Text>
     </Box>
