@@ -120,9 +120,9 @@ export default function App() {
     { label: "Register new node", value: PROFILE_REGISTER_VALUE },
     { label: "Import existing node", value: PROFILE_IMPORT_VALUE },
     ...profileList.map((p) => {
-      const name = p.agentName || p.name;
-      const marker = p.active ? " (last used)" : "";
-      return { label: `${name}${marker}`, value: `profile:${p.name}` };
+      const name = p.agentName || p.nodeId || p.name;
+      const marker = p.active ? " ◀ last used" : "";
+      return { label: `[••] ${name}${marker}`, value: `profile:${p.name}` };
     }),
   ];
   const titleText = screen === "profile_select" ? "SELECT PROFILE" : "ONBOARDING";

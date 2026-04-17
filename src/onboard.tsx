@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout } from "ink";
 import { TextInput, Select, ThemeProvider, extendTheme, defaultTheme } from "@inkjs/ui";
 import {
   reloadConfig,
@@ -99,6 +99,18 @@ function displayValue(key: string, value: string): string {
   return value;
 }
 
+function displayKey(key: string): string {
+  if (key === "_node_display_name") return "node_display_name";
+  return key;
+}
+
+function fitText(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (text.length <= width) return text;
+  if (width <= 3) return text.slice(0, width);
+  return `${text.slice(0, width - 3)}...`;
+}
+
 type Phase = "input" | "validating" | "validating_creds" | "fetching_models" | "registering" | "importing";
 
 interface OnboardProps {
@@ -129,6 +141,8 @@ export default function Onboard({
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState("");
   const [backFocused, setBackFocused] = useState(false);
+  const { stdout } = useStdout();
+  const [termCols, setTermCols] = useState(stdout.columns ?? 80);
 
   const isLoading = phase !== "input";
   const loader = useLoader(isLoading);
@@ -151,6 +165,14 @@ export default function Onboard({
   }, [onStepChange, stepIdx, step?.label, steps.length]);
 
   useEffect(() => () => onStepChange?.(null), [onStepChange]);
+
+  useEffect(() => {
+    const onResize = () => setTermCols(stdout.columns ?? 80);
+    stdout.on("resize", onResize);
+    return () => { stdout.off("resize", onResize); };
+  }, [stdout]);
+
+  const configPanelWidth = Math.max(56, termCols - 4);
 
   function goBack() {
     if (!canGoBack) return;
@@ -578,12 +600,28 @@ export default function Onboard({
 
       {Object.keys(values).length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={COLORS.GREY_NEUTRAL}>─── configured ───</Text>
-          {Object.entries(values).map(([k, v]) => (
-            <Text key={k} color={COLORS.GREY_NEUTRAL}>
-              {k}: {displayValue(k, v)}
-            </Text>
-          ))}
+          {(() => {
+            const entries = Object.entries(values).map(([k, v]) => `${displayKey(k)}: ${displayValue(k, v)}`);
+            const innerWidth = Math.max(20, configPanelWidth - 2);
+            const bodyWidth = Math.max(1, innerWidth - 2);
+            const title = " NODE PROFILE CONFIGURATION ";
+            const topLine = `┌${title}${"─".repeat(Math.max(0, innerWidth - title.length))}┐`;
+            const bottomLine = `└${"─".repeat(innerWidth)}┘`;
+
+            return (
+              <Box flexDirection="column">
+                <Text color={COLORS.GREY_LIGHT} bold>{topLine}</Text>
+                {entries.map((line, i) => (
+                  <Text key={`${line}-${i}`}>
+                    <Text color={COLORS.GREY_LIGHT}>│ </Text>
+                    <Text color={COLORS.GREY_NEUTRAL}>{fitText(line, bodyWidth).padEnd(bodyWidth, " ")}</Text>
+                    <Text color={COLORS.GREY_LIGHT}> │</Text>
+                  </Text>
+                ))}
+                <Text color={COLORS.GREY_LIGHT}>{bottomLine}</Text>
+              </Box>
+            );
+          })()}
         </Box>
       )}
     </Box>
