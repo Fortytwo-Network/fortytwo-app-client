@@ -46,6 +46,8 @@ export async function initViewerBus(
         answerWinRate: String(rawStats.answer_win_rate ?? "0"),
         judgmentsMade: rawStats.judgments_made ?? 0,
         judgmentAccuracy: String(rawStats.judgment_accuracy ?? "0"),
+        capabilityWins: rawStats.capability_wins ?? 0,
+        capabilityLosses: rawStats.capability_losses ?? 0,
         queriesSubmitted: rawStats.queries_submitted ?? 0,
         queriesCompleted: rawStats.queries_completed ?? 0,
       });

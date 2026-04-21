@@ -29,6 +29,8 @@ interface Stats {
   queriesSubmitted: number; queriesCompleted: number;
   likesGiven: number; likesReceived: number;
   forBalance: string; intelligenceNormalized: string; judgingNormalized: string;
+  capabilityRank: number | null; nodeTier: "challenger" | "capable" | null;
+  capabilityWins: number; capabilityLosses: number;
 }
 interface Config {
   agentId: string; modelName: string; inferenceType: string;
@@ -193,6 +195,8 @@ export default function AgenticVision() {
     queriesSubmitted: 0, queriesCompleted: 0,
     likesGiven: 0, likesReceived: 0,
     forBalance: "0", intelligenceNormalized: "0", judgingNormalized: "0",
+    capabilityRank: null, nodeTier: null,
+    capabilityWins: 0, capabilityLosses: 0,
   });
   const [logs, setLogs] = useState<Log[]>([]);
   const [txs, setTxs] = useState<Tx[]>([]);
@@ -669,6 +673,27 @@ export default function AgenticVision() {
                   <span className="text-white/40">Judgment</span>
                   <span className="text-white/60">{stats.judgeElo || "—"} / {stats.judgingNormalized || "—"}</span>
                 </div>
+                {stats.nodeTier === "capable" && stats.capabilityRank !== null && (
+                  <>
+                    <div className="flex justify-between text-[15px] tracking-[0.15px]">
+                      <span className="text-white/40">Capability</span>
+                      <span className="text-white/60">{stats.capabilityRank} / 42</span>
+                    </div>
+                    {(stats.capabilityWins + stats.capabilityLosses) > 0 && (
+                      <div className="flex justify-between text-[15px] tracking-[0.15px]">
+                        <span className="text-white/40">Capability win rate</span>
+                        <span className="text-white/60">
+                          {Math.round(
+                            (stats.capabilityWins /
+                              (stats.capabilityWins + stats.capabilityLosses)) *
+                              100,
+                          )}
+                          % ({stats.capabilityWins}/{stats.capabilityWins + stats.capabilityLosses})
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>

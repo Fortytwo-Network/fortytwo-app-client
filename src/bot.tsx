@@ -28,6 +28,8 @@ type AgentStats = {
   judgments: number;
   judgmentsWon: number;
   accuracy: number;
+  capabilityWins: number;
+  capabilityLosses: number;
 };
 
 type AgentProfile = {
@@ -299,6 +301,8 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
             judgments: rawStats.judgments_made ?? 0,
             judgmentsWon: rawStats.judgments_won ?? 0,
             accuracy: parseFloat(rawStats.judgment_accuracy ?? "0"),
+            capabilityWins: rawStats.capability_wins ?? 0,
+            capabilityLosses: rawStats.capability_losses ?? 0,
           });
         }
         if (agentData) {
@@ -504,6 +508,10 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const jStr = stats ? formatNumber(stats.judgments) : "—";
   const jWonStr = stats ? formatNumber(stats.judgmentsWon) : "—";
   const jRateStr = stats ? `${Math.round(stats.accuracy)}%` : "—";
+  const cTotal = stats ? stats.capabilityWins + stats.capabilityLosses : 0;
+  const cRateStr = stats && cTotal > 0
+    ? `${Math.round((stats.capabilityWins / cTotal) * 100)}%`
+    : null;
   const balStr = balance !== null ? formatNumber(balance) : "—";
   const stakedStr = staked !== null ? formatNumber(staked) : "—";
   const panelWidth = Math.max(40, termCols - 8);
@@ -521,7 +529,9 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const tierDetail = nodeTier === "capable"
     ? `INT ${intScore} · JDG ${jdgScore}`
     : nodeTier === "challenger"
-      ? "PASS CAPABILITY CHALLENGE, UNLOCK FULL FUNCTIONALITY"
+      ? (cRateStr
+        ? `CAPABILITY WIN RATE ${cRateStr} (${stats!.capabilityWins}/${cTotal})`
+        : "PASS CAPABILITY CHALLENGE, UNLOCK FULL FUNCTIONALITY")
       : "INITIALIZING";
   const tierColor = nodeTier === "capable" ? COLORS.WHITE : COLORS.GREY_LIGHT;
   const tierTitleColor = nodeTier === "capable" ? COLORS.BLUE_CONTENT : COLORS.WHITE;

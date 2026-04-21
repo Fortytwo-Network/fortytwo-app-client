@@ -89,6 +89,8 @@ export interface ViewerStats {
   answerWinRate: string;
   judgmentsMade: number;
   judgmentAccuracy: string;
+  capabilityWins: number;
+  capabilityLosses: number;
   queriesSubmitted: number;
   queriesCompleted: number;
   likesGiven: number;
@@ -150,6 +152,8 @@ function defaultStats(): ViewerStats {
     answerWinRate: "0",
     judgmentsMade: 0,
     judgmentAccuracy: "0",
+    capabilityWins: 0,
+    capabilityLosses: 0,
     queriesSubmitted: 0,
     queriesCompleted: 0,
     likesGiven: 0,
