@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useStdout } from "ink";
 import chalk from "chalk";
 import { CommandInput } from "./command-input.js";
@@ -111,7 +111,14 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const [runtimeStatus, setRuntimeStatus] = useState<"RUNNING" | "STOPPED">("STOPPED");
   const [activeDot, setActiveDot] = useState(-1);
   const [llmActive, setLlmActive] = useState(0);
+  const [challengeRoundsAvailable, setChallengeRoundsAvailable] = useState(0);
   const [stats, setStats] = useState<AgentStats | null>(null);
+  const challengeRoundBase = useRef({ answers: 0, wins: 0, active: false });
+  const [challengeRoundStats, setChallengeRoundStats] = useState<{
+    answers: number;
+    wins: number;
+    winRate: number;
+  } | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const { stdout } = useStdout();
 
@@ -125,7 +132,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
   const termCols = termSize.cols;
   const termRows = termSize.rows;
-  const visibleCount = Math.max(termRows - CHROME_LINES, 5);
+  const visibleCount = Math.max(termRows - (CHROME_LINES + (challengeRoundStats ? 1 : 0)), 5);
 
   const pushLine = useCallback((msg: string) => {
     setLines((prev) => {
@@ -330,9 +337,47 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   useEffect(() => {
     const id = setInterval(() => {
       setLlmActive(getLlmStats().active);
+      setChallengeRoundsAvailable(viewerBus.stats.challengeRoundsAvailable || 0);
     }, 1000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!stats) {
+      challengeRoundBase.current = { answers: 0, wins: 0, active: false };
+      setChallengeRoundStats(null);
+      return;
+    }
+
+    const challengeActive = nodeTier === "challenger" && challengeRoundsAvailable > 0;
+    const baseline = challengeRoundBase.current;
+
+    if (challengeActive && !baseline.active) {
+      challengeRoundBase.current = {
+        active: true,
+        answers: stats.answers,
+        wins: stats.answersWon,
+      };
+      setChallengeRoundStats({ answers: 0, wins: 0, winRate: 0 });
+      return;
+    }
+
+    if (!challengeActive && baseline.active) {
+      challengeRoundBase.current = { answers: 0, wins: 0, active: false };
+      setChallengeRoundStats(null);
+      return;
+    }
+
+    if (challengeActive && baseline.active) {
+      const answers = Math.max(0, stats.answers - baseline.answers);
+      const wins = Math.max(0, stats.answersWon - baseline.wins);
+      setChallengeRoundStats({
+        answers,
+        wins,
+        winRate: answers > 0 ? Math.round((wins / answers) * 100) : 0,
+      });
+    }
+  }, [stats, nodeTier, challengeRoundsAvailable]);
 
   // Update check — fire-and-forget on mount
   useEffect(() => {
@@ -539,6 +584,12 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const leftQ = `${padCell("Q", qStr, 12)}${padCell("fin", finStr, 12)}`;
   const leftA = `${padCell("A", aStr, 12)}${padCell("won", aWonStr, 12)}rate ${aRateStr}`;
   const leftJ = `${padCell("J", jStr, 12)}${padCell("won", jWonStr, 12)}rate ${jRateStr}`;
+  const challengeRoundLine = challengeRoundStats
+    ? fitLine(
+      `${padCell("A", formatNumber(challengeRoundStats.answers), 12)}${padCell("won", formatNumber(challengeRoundStats.wins), 12)}rate ${challengeRoundStats.winRate}% /current challenge only`,
+      panelWidth,
+    )
+    : null;
   const scoreLine1 = makeColumnParts(leftQ, providerStr, panelWidth, columnLeftWidth);
   const scoreLine2 = makeColumnParts(leftA, cfg.model_name, panelWidth, columnLeftWidth);
   const scoreLine3 = makeColumnParts(
@@ -593,7 +644,11 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
             <Text color={COLORS.WHITE}> {capRankValue}</Text>
             <Text color={COLORS.GREY_LIGHT}>{capRankSuffix}</Text>
           </Text>
-          <Text> </Text>
+          {challengeRoundLine ? (
+            <Text color={COLORS.BLUE_FRAME} wrap="truncate-end">{challengeRoundLine}</Text>
+          ) : (
+            <Text> </Text>
+          )}
           <Text wrap="truncate-end">
             <Text color={COLORS.GREY_LIGHT}>{scoreLine1.left}</Text>
             {(() => {

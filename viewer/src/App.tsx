@@ -31,6 +31,7 @@ interface Stats {
   forBalance: string; intelligenceNormalized: string; judgingNormalized: string;
   capabilityRank: number | null; nodeTier: "challenger" | "capable" | null;
   capabilityWins: number; capabilityLosses: number;
+  challengeRoundsAvailable: number;
 }
 interface Config {
   agentId: string; modelName: string; inferenceType: string;
@@ -197,6 +198,7 @@ export default function AgenticVision() {
     forBalance: "0", intelligenceNormalized: "0", judgingNormalized: "0",
     capabilityRank: null, nodeTier: null,
     capabilityWins: 0, capabilityLosses: 0,
+    challengeRoundsAvailable: 0,
   });
   const [logs, setLogs] = useState<Log[]>([]);
   const [txs, setTxs] = useState<Tx[]>([]);
@@ -220,6 +222,12 @@ export default function AgenticVision() {
 
   const logRef = useRef<HTMLDivElement>(null);
   const thinkRef = useRef<HTMLDivElement>(null);
+  const challengeRoundBase = useRef({ answers: 0, wins: 0, active: false });
+  const [challengeRoundStats, setChallengeRoundStats] = useState<{
+    answers: number;
+    wins: number;
+    rate: number;
+  } | null>(null);
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -353,10 +361,45 @@ export default function AgenticVision() {
     thinkRef.current?.scrollTo({ top: thinkRef.current.scrollHeight });
   }, [streamText]);
 
+  useEffect(() => {
+    const challengeActive = (stats.challengeRoundsAvailable || 0) > 0;
+    const baseline = challengeRoundBase.current;
+
+    if (challengeActive && !baseline.active) {
+      challengeRoundBase.current = {
+        active: true,
+        answers: stats.answersSubmitted || 0,
+        wins: stats.answersWon || 0,
+      };
+      setChallengeRoundStats({ answers: 0, wins: 0, rate: 0 });
+      return;
+    }
+
+    if (!challengeActive && baseline.active) {
+      challengeRoundBase.current = { answers: 0, wins: 0, active: false };
+      setChallengeRoundStats(null);
+      return;
+    }
+
+    if (challengeActive && baseline.active) {
+      const answers = Math.max(0, (stats.answersSubmitted || 0) - baseline.answers);
+      const wins = Math.max(0, (stats.answersWon || 0) - baseline.wins);
+      setChallengeRoundStats({
+        answers,
+        wins,
+        rate: answers > 0 ? Math.round((wins / answers) * 100) : 0,
+      });
+    }
+  }, [stats.challengeRoundsAvailable, stats.answersSubmitted, stats.answersWon]);
+
   const activeQuery = queries.find((q) => q.status === "active");
   const winRate = stats.answersSubmitted > 0
     ? ((stats.answersWon / stats.answersSubmitted) * 100).toFixed(1)
     : stats.answerWinRate || "0";
+  const challengeAnswersTotal = (stats.capabilityWins || 0) + (stats.capabilityLosses || 0);
+  const challengeWinRate = challengeAnswersTotal > 0
+    ? Math.round((stats.capabilityWins / challengeAnswersTotal) * 100)
+    : 0;
 
   const isCooldown = state === "COOLDOWN";
   const isJudging = state === "JUDGING";
@@ -546,6 +589,11 @@ export default function AgenticVision() {
           {stats.stepDetail && (
             <span className="text-white/30 truncate max-w-[200px]">{stats.stepDetail}</span>
           )}
+          {challengeRoundStats && (
+            <span className="text-ft-blue max-w-[420px] truncate">
+              A {formatNumber(challengeRoundStats.answers)} won {formatNumber(challengeRoundStats.wins)} rate {challengeRoundStats.rate}% /current challenge only
+            </span>
+          )}
           {isStreaming ? (
             <span className="text-white/40 animate-ft-pulse">Generating response...</span>
           ) : botThinking ? (
@@ -598,7 +646,7 @@ export default function AgenticVision() {
           <div className="px-3 flex flex-col gap-6">
             <div className="flex gap-3">
               <div className="flex-1 flex flex-col gap-2 pr-1">
-                <span className="text-[15px] text-white tracking-[0.15px]">Answers</span>
+                <span className="text-[15px] text-white tracking-[0.15px]">Answers Total</span>
                 <span className="text-[17px] text-white tracking-[0.17px]">{formatNumber(stats.answersSubmitted || 0)}</span>
                 <div className="text-[14px] text-white/60 tracking-[0.14px] leading-5">
                   {formatNumber(stats.answersWon || 0)} wins<br />{winRate}% win rate
@@ -610,6 +658,13 @@ export default function AgenticVision() {
                 <div className="text-[14px] text-white/60 tracking-[0.14px] leading-5">
                   {formatNumber(stats.accuracy || 0)}% accuracy
                 </div>
+              </div>
+            </div>
+            <div className="pt-1 flex flex-col gap-2">
+              <span className="text-[15px] text-white tracking-[0.15px]">Challenge Answers</span>
+              <span className="text-[17px] text-white tracking-[0.17px]">{formatNumber(challengeAnswersTotal)}</span>
+              <div className="text-[14px] text-white/60 tracking-[0.14px] leading-5">
+                {formatNumber(stats.capabilityWins || 0)} wins<br />{challengeWinRate}% win rate
               </div>
             </div>
 
