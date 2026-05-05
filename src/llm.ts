@@ -81,7 +81,7 @@ export function resetLlmClient(): void {
   semaphore = null;
 }
 
-type LlmPurpose = "ranking" | "generation" | "registration" | "other";
+type LlmPurpose = "ranking" | "generation" | "other";
 
 const stats = {
   calls: 0,
@@ -250,41 +250,34 @@ export async function callLlm(
   return callLlmApi([{ role: "user", content: prompt }], retries, 0.3, signal, purpose);
 }
 
-export async function compareForRegistration(
-  question: string,
-  optionA: string,
-  optionB: string,
-  signal?: AbortSignal,
-): Promise<number> {
-  const prompt =
-    `######Problem######: \n${question}\n` +
-    `######Solution A######. \n${optionA}\n` +
-    `######Solution B######. \n${optionB}\n` +
-    `######Instruction######:\n` +
-    `Select the best one of the two proposed solutions to the problem. ` +
-    `THEN end output with best solution overall index (A or B) on the new line ` +
-    `(Only letter, nothing else).\n` +
-    `Don't try to re-solve/re-compute/re-think the problem. ` +
-    `Only find flows/mistakes in a proposed solutions and pick the best one (and that not validated/certified by you to be ideal/fully correct).\n` +
-    `If both solutions are equal or you cannot determine which is better, output U.\n` +
-    `######Decision######:`;
+/**
+ * Cheap health-check: sends a 1-token prompt with a short timeout, bypassing
+ * the semaphore and retry machinery. Returns `true` if the inference backend
+ * replied within the deadline, `false` otherwise (timeout, network error,
+ * auth error, model missing, etc.). Meant to gate worker cycles after a
+ * previous LLM failure so we don't burn FOR on unanswerable joins.
+ */
+export async function pingLlm(timeoutMs = 5000): Promise<boolean> {
+  const cfg = config.get();
+  const isLocal = cfg.inference_type === "self-hosted";
+  if (!isLocal && !cfg.openrouter_api_key) return false;
 
   try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await callLlm(prompt, 2, signal, "registration");
-      const letter = parseLastLetter(response, new Set(["A", "B", "U"]));
-      if (letter !== null) {
-        if (letter === "A") return 1;
-        if (letter === "B") return -1;
-        return 0;
-      }
-    }
+    const client = getClient();
+    await client.chat.completions.create(
+      {
+        model: cfg.model_name,
+        messages: [{ role: "user", content: "ok" }],
+        temperature: 0,
+        max_tokens: 1,
+      },
+      { signal: AbortSignal.timeout(timeoutMs), maxRetries: 0 },
+    );
+    return true;
   } catch (err) {
-    verbose(`✗ Registration comparison failed: ${err}`);
-    return 0;
+    verbose(`pingLlm failed: ${err}`);
+    return false;
   }
-
-  return 0;
 }
 
 export async function evaluateGoodEnough(

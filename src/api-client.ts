@@ -1,5 +1,15 @@
 import * as config from "./config.js";
 import { sleep, verbose } from "./utils.js";
+import type {
+  CapabilityInfo,
+  CapabilityHistoryEntry,
+  ChallengeAnswer,
+  ChallengeRound,
+  JoinRoundResponse,
+  PaginatedResponse,
+  RegistrationResponse,
+  ResetResponse,
+} from "./api-types.js";
 
 export class FortyTwoClient {
   private baseUrl: string;
@@ -44,17 +54,13 @@ export class FortyTwoClient {
     this.tokenExpiresAt = Date.now() + expiresIn * 1000;
   }
 
-  // ── Registration ──────────────────────────────────────────────
+  // ── Registration  ────────────────────────
 
-  async register(publicKeyPem: string, displayName?: string): Promise<Record<string, any>> {
+  async register(publicKeyPem: string, displayName?: string): Promise<RegistrationResponse> {
     const payload: Record<string, any> = { public_key: publicKeyPem };
     if (displayName) payload.display_name = displayName;
-    return this.request("POST", "/auth/register", { body: payload, auth: false, timeout: 60_000 });
-  }
-
-  async completeRegistration(sessionId: string, responses: Record<string, any>[]): Promise<Record<string, any>> {
-    return this.request("POST", "/auth/register/complete", {
-      body: { challenge_session_id: sessionId, responses },
+    return this.request<RegistrationResponse>("POST", "/auth/register", {
+      body: payload,
       auth: false,
       timeout: 60_000,
     });
@@ -118,31 +124,61 @@ export class FortyTwoClient {
     });
   }
 
-  // ── Account Reset & Reactivation ─────────────────────────────
+  // ── Capability ────────────────────────────────────────────────
 
-  async startAccountReset(): Promise<Record<string, any>> {
-    return this.request("POST", "/auth/reset/start");
+  async getCapability(agentId?: string): Promise<CapabilityInfo> {
+    const id = agentId ?? this.nodeId;
+    return this.request<CapabilityInfo>("GET", `/capability/${id}`);
   }
 
-  async completeAccountReset(sessionId: string, responses: Record<string, any>[]): Promise<Record<string, any>> {
-    return this.request("POST", "/auth/reset/complete", {
-      body: { challenge_session_id: sessionId, responses },
-    });
+  async getCapabilityHistory(
+    agentId?: string,
+    page = 1,
+    pageSize = 20,
+  ): Promise<PaginatedResponse<CapabilityHistoryEntry>> {
+    const id = agentId ?? this.nodeId;
+    return this.request<PaginatedResponse<CapabilityHistoryEntry>>(
+      "GET",
+      `/capability/${id}/history`,
+      { params: { page, page_size: pageSize } },
+    );
   }
 
-  async startReactivation(nodeId: string, nodeSecret: string): Promise<Record<string, any>> {
-    const data = await this.request("POST", "/auth/reactivate/start", {
-      body: { agent_id: nodeId, secret: nodeSecret },
-      auth: false,
-    });
-    return data;
+  async resetCapability(agentId?: string): Promise<ResetResponse> {
+    const id = agentId ?? this.nodeId;
+    return this.request<ResetResponse>("POST", `/capability/${id}/reset`);
   }
 
-  async completeReactivation(sessionId: string, responses: Record<string, any>[]): Promise<Record<string, any>> {
-    return this.request("POST", "/auth/reactivate/complete", {
-      body: { challenge_session_id: sessionId, responses },
-      auth: false,
-    });
+  // ── Foundation Pool / Capability Challenge ───────────────────
+
+  async listActiveChallengeRounds(
+    page = 1,
+    pageSize = 20,
+  ): Promise<PaginatedResponse<ChallengeRound>> {
+    return this.request<PaginatedResponse<ChallengeRound>>(
+      "GET",
+      "/foundation-pool/rounds",
+      { params: { page, page_size: pageSize } },
+    );
+  }
+
+  async getChallengeRound(roundId: string): Promise<ChallengeRound> {
+    return this.request<ChallengeRound>("GET", `/foundation-pool/rounds/${roundId}`);
+  }
+
+  async joinChallengeRound(roundId: string): Promise<JoinRoundResponse> {
+    return this.request<JoinRoundResponse>(
+      "POST",
+      `/foundation-pool/rounds/${roundId}/join`,
+    );
+  }
+
+  async submitChallengeAnswer(roundId: string, content: string): Promise<ChallengeAnswer> {
+    return this.request<ChallengeAnswer>(
+      "POST",
+      `/foundation-pool/rounds/${roundId}/answers`,
+      { body: { content } },
+    );
   }
 
   // ── Economy ───────────────────────────────────────────────────
@@ -183,7 +219,7 @@ export class FortyTwoClient {
     }
   }
 
-  async request(
+  async request<T = Record<string, any>>(
     method: string,
     path: string,
     opts: {
@@ -193,7 +229,7 @@ export class FortyTwoClient {
       maxRetries?: number;
       timeout?: number;
     } = {},
-  ): Promise<Record<string, any>> {
+  ): Promise<T> {
     const { body, params, auth = true, maxRetries = 3, timeout = 30_000 } = opts;
     let url = `${this.baseUrl}${path}`;
 
@@ -271,12 +307,25 @@ export class FortyTwoClient {
             detail = parsed.map((e: any) => e.msg ?? String(e)).join("; ");
           }
         } catch {}
-        throw new Error(detail || `API error ${resp.status} on ${method} ${path}: ${text.slice(0, 500)}`);
+        const err = new ApiError(
+          resp.status,
+          detail || `API error ${resp.status} on ${method} ${path}: ${text.slice(0, 500)}`,
+        );
+        throw err;
       }
 
-      return (await resp.json()) as Record<string, any>;
+      return (await resp.json()) as T;
     }
 
     throw new Error(`Request to ${method} ${path} failed after ${maxRetries + 1} attempts`);
+  }
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
   }
 }

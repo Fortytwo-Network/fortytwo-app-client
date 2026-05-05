@@ -1,18 +1,21 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useStdout } from "ink";
 import chalk from "chalk";
 import { CommandInput } from "./command-input.js";
 import { get as getConfig } from "./config.js";
 import { COLORS } from "./constants.js";
-import { setLogFn, setVerbose, log, sleep, getPinnedTasks, formatNumber, truncateName, getRoleLabel } from "./utils.js";
-import { FortyTwoClient } from "./api-client.js";
-import { loadIdentity, resetAccount, reactivateAccount } from "./identity.js";
-import { runCycle, checkBalance, InsufficientFundsError, initViewerBus } from "./main.js";
+import { setLogFn, setVerbose, log, sleep, formatNumber, truncateName, getRoleLabel } from "./utils.js";
+import { FortyTwoClient, ApiError } from "./api-client.js";
+import { loadIdentity } from "./identity.js";
+import { runCycle, checkBalance, fetchCapability, initViewerBus } from "./main.js";
+import { createChallengeContext, LlmFailureError } from "./capability-challenge.js";
+import { pingLlm } from "./llm.js";
 import { getLlmStats } from "./llm.js";
 import { executeCommand, SUGGESTIONS } from "./commands.js";
 import { validateConfig, validateModel } from "./setup-logic.js";
 import { viewerBus } from "./event-bus.js";
 import { checkForUpdate, UPDATE_COMMAND } from "./update-check.js";
+import { LogoMark, LOGO_DOT_FRAME_COUNT } from "./logo-mark.js";
 
 import pkg from "../package.json" with { type: "json" };
 
@@ -25,6 +28,8 @@ type AgentStats = {
   judgments: number;
   judgmentsWon: number;
   accuracy: number;
+  capabilityWins: number;
+  capabilityLosses: number;
 };
 
 type AgentProfile = {
@@ -34,22 +39,57 @@ type AgentProfile = {
 
 const VERSION = pkg.version;
 
-const LOGO = [
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-  " ░████▓░ ░████▓░  ░████▓░ ░████▓░",
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-  "                  ░████▓░ ░████▓░",
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-  " ░████▓░ ░████▓░  ░████▓░ ░████▓░",
-  "  ▒██▓░   ▒██▓░   ░████▓░ ░████▓░",
-];
-
 const MAX_LINES = 200;
-// frame header(1) + empty(1) + logo(7) + empty(1) + frame footer(1) + gap(1) + separator(1) + prompt+footer(1) + gaps
-const CHROME_LINES = 14;
+// Header + metrics + separator + prompt + footer.
+const CHROME_LINES = 16;
 
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + " ".repeat(len - str.length);
+function formatCapabilityRank(value: number | null): string {
+  if (value === null) return "—";
+  const fixed = value.toFixed(4);
+  return fixed.replace(/\.?0+$/, "");
+}
+
+function buildCapabilityBar(value: number | null, total = 42): string {
+  if (value === null) return `[${"·".repeat(total)}]`;
+
+  const clamped = Math.max(0, Math.min(value, total));
+  const full = Math.floor(clamped);
+  const fractional = clamped - full;
+  const partial = fractional <= 0
+    ? ""
+    : fractional <= 0.5
+      ? "░"
+      : "▒";
+  const empty = Math.max(0, total - full - (partial ? 1 : 0));
+  return `[${"█".repeat(full)}${partial}${"·".repeat(empty)}]`;
+}
+
+function fitLine(base: string, termCols: number, reserve = 0): string {
+  const max = Math.max(10, termCols - reserve);
+  if (base.length <= max) return base;
+  if (max <= 3) return base.slice(0, max);
+  return `${base.slice(0, max - 3)}...`;
+}
+
+function padCell(label: string, value: string, width: number): string {
+  const cell = `${label} ${value}`;
+  return cell.length >= width ? `${cell} ` : `${cell}${" ".repeat(width - cell.length)}`;
+}
+
+function makeColumnParts(
+  left: string,
+  right: string,
+  totalWidth: number,
+  leftWidth: number,
+): { left: string; right: string } {
+  const safeTotal = Math.max(20, totalWidth);
+  const safeLeft = Math.max(10, Math.min(leftWidth, safeTotal - 6));
+  const safeRight = Math.max(5, safeTotal - safeLeft - 1);
+
+  const leftPart = fitLine(left, safeLeft);
+  const rightPart = fitLine(right, safeRight);
+  const gap = Math.max(1, safeLeft - leftPart.length + 1);
+  return { left: `${leftPart}${" ".repeat(gap)}`, right: rightPart };
 }
 
 interface BotScreenProps {
@@ -64,8 +104,21 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const [agentRole, setAgentRole] = useState("");
   const [balance, setBalance] = useState<number | null>(null);
   const [staked, setStaked] = useState<number | null>(null);
+  const [challengeLocked, setChallengeLocked] = useState<number | null>(null);
+  const [capabilityRank, setCapabilityRank] = useState<number | null>(null);
+  const [nodeTier, setNodeTier] = useState<"challenger" | "capable" | null>(null);
+  const [deadLocked, setDeadLocked] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<"RUNNING" | "STOPPED">("STOPPED");
+  const [activeDot, setActiveDot] = useState(-1);
   const [llmActive, setLlmActive] = useState(0);
+  const [challengeRoundsAvailable, setChallengeRoundsAvailable] = useState(0);
   const [stats, setStats] = useState<AgentStats | null>(null);
+  const challengeRoundBase = useRef({ answers: 0, wins: 0, active: false });
+  const [challengeRoundStats, setChallengeRoundStats] = useState<{
+    answers: number;
+    wins: number;
+    winRate: number;
+  } | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const { stdout } = useStdout();
 
@@ -79,7 +132,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
   const termCols = termSize.cols;
   const termRows = termSize.rows;
-  const visibleCount = Math.max(termRows - CHROME_LINES, 5);
+  const visibleCount = Math.max(termRows - (CHROME_LINES + (challengeRoundStats ? 1 : 0)), 5);
 
   const pushLine = useCallback((msg: string) => {
     setLines((prev) => {
@@ -89,6 +142,19 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   }, []);
 
   const [client, setClient] = useState<FortyTwoClient | null>(null);
+
+  useEffect(() => {
+    if (runtimeStatus !== "RUNNING") {
+      setActiveDot(-1);
+      return;
+    }
+
+    setActiveDot(0);
+    const id = setInterval(() => {
+      setActiveDot((prev) => (prev + 1) % LOGO_DOT_FRAME_COUNT);
+    }, 230);
+    return () => clearInterval(id);
+  }, [runtimeStatus]);
 
   const handleCommand = useCallback((input: string) => {
     const raw = input.trim();
@@ -113,10 +179,78 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         pushLine("Not connected yet, wait for login.");
         return;
       }
+      if (nodeTier && nodeTier !== "capable") {
+        pushLine(
+          `✕ You are still a Challenger${
+            capabilityRank !== null ? ` (${capabilityRank}/42)` : ""
+          }. Reach Capability 42 by answering challenges first.`,
+        );
+        return;
+      }
       pushLine(`Submitting question...`);
       const encrypted = Buffer.from(question, "utf-8").toString("base64");
       client.createQuery(encrypted, "general")
         .then((res) => pushLine(`✓ Question submitted! ID: ${res.id ?? "?"}`))
+        .catch((err) => {
+          if (err instanceof ApiError && err.status === 403) {
+            pushLine(
+              "✕ Challenger nodes cannot create queries. Reach Capability 42 first.",
+            );
+          } else {
+            pushLine(`✕ Error: ${err}`);
+          }
+        });
+      return;
+    }
+
+    if (stripped === "capability" || stripped === "capability show") {
+      if (!client) { pushLine("Not connected yet, wait for login."); return; }
+      client.getCapability(client.nodeId)
+        .then((cap) => {
+          pushLine(`Node tier:   ${cap.node_tier}`);
+          pushLine(`Capability:  ${cap.capability_rank}/42`);
+          pushLine(`Dead locked: ${cap.is_dead_locked ? "yes" : "no"}`);
+        })
+        .catch((err) => pushLine(`✕ Error: ${err}`));
+      return;
+    }
+
+    if (stripped === "capability history") {
+      if (!client) { pushLine("Not connected yet, wait for login."); return; }
+      client.getCapabilityHistory(client.nodeId, 1, 10)
+        .then((history) => {
+          if (history.items.length === 0) {
+            pushLine("No capability changes recorded.");
+            return;
+          }
+          pushLine(`Capability history (${history.total} total, showing last ${history.items.length}):`);
+          for (const e of history.items) {
+            const sign = e.delta > 0 ? "+" : "";
+            pushLine(`  ${e.created_at}  ${sign}${e.delta}  ${e.rank_before}→${e.rank_after}  ${e.reason}`);
+          }
+        })
+        .catch((err) => pushLine(`✕ Error: ${err}`));
+      return;
+    }
+
+    if (stripped === "challenge" || stripped === "challenge list") {
+      if (!client) { pushLine("Not connected yet, wait for login."); return; }
+      client.listActiveChallengeRounds(1, 50)
+        .then((page) => {
+          if (page.items.length === 0) {
+            pushLine("No active challenge rounds.");
+            return;
+          }
+          pushLine(`Active challenge rounds (${page.items.length}):`);
+          for (const r of page.items) {
+            const slots = `${r.joined_count}/${r.max_participants} joined`;
+            let tag = "";
+            if (r.slots_remaining <= 0) tag = " [full]";
+            else if (r.has_answered) tag = " [answered]";
+            else if (r.has_joined) tag = " [joined]";
+            pushLine(`  ${r.id}  ends ${r.ends_at}  ${r.for_budget_total} FOR  ${slots}${tag}`);
+          }
+        })
         .catch((err) => pushLine(`✕ Error: ${err}`));
       return;
     }
@@ -142,7 +276,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
     if (creating && onCreateProfile) {
       onCreateProfile();
     }
-  }, [pushLine, client, onSwitchProfile, onCreateProfile]);
+  }, [pushLine, client, onSwitchProfile, onCreateProfile, nodeTier, capabilityRank]);
 
 
   // Balance + stats + profile ticker — every 30s
@@ -162,6 +296,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         if (balanceData) {
           setBalance(parseFloat(balanceData.available ?? "0"));
           setStaked(parseFloat(balanceData.staked ?? "0"));
+          setChallengeLocked(parseFloat(balanceData.challenge_locked ?? "0"));
         }
         if (rawStats) {
           setStats({
@@ -173,6 +308,8 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
             judgments: rawStats.judgments_made ?? 0,
             judgmentsWon: rawStats.judgments_won ?? 0,
             accuracy: parseFloat(rawStats.judgment_accuracy ?? "0"),
+            capabilityWins: rawStats.capability_wins ?? 0,
+            capabilityLosses: rawStats.capability_losses ?? 0,
           });
         }
         if (agentData) {
@@ -181,6 +318,12 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
             intelligenceScore: parseFloat(p.intelligence_score ?? p.intellect_score ?? "0"),
             judgingScore: parseFloat(p.judging_score ?? p.judge_score ?? "0"),
           });
+          if (agentData.capability_rank !== undefined) {
+            setCapabilityRank(Number(agentData.capability_rank));
+          }
+          if (agentData.node_tier) {
+            setNodeTier(agentData.node_tier);
+          }
         }
       } catch { /* ignore */ }
     };
@@ -194,9 +337,47 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   useEffect(() => {
     const id = setInterval(() => {
       setLlmActive(getLlmStats().active);
+      setChallengeRoundsAvailable(viewerBus.stats.challengeRoundsAvailable || 0);
     }, 1000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!stats) {
+      challengeRoundBase.current = { answers: 0, wins: 0, active: false };
+      setChallengeRoundStats(null);
+      return;
+    }
+
+    const challengeActive = nodeTier === "challenger" && challengeRoundsAvailable > 0;
+    const baseline = challengeRoundBase.current;
+
+    if (challengeActive && !baseline.active) {
+      challengeRoundBase.current = {
+        active: true,
+        answers: stats.answers,
+        wins: stats.answersWon,
+      };
+      setChallengeRoundStats({ answers: 0, wins: 0, winRate: 0 });
+      return;
+    }
+
+    if (!challengeActive && baseline.active) {
+      challengeRoundBase.current = { answers: 0, wins: 0, active: false };
+      setChallengeRoundStats(null);
+      return;
+    }
+
+    if (challengeActive && baseline.active) {
+      const answers = Math.max(0, stats.answers - baseline.answers);
+      const wins = Math.max(0, stats.answersWon - baseline.wins);
+      setChallengeRoundStats({
+        answers,
+        wins,
+        winRate: answers > 0 ? Math.round((wins / answers) * 100) : 0,
+      });
+    }
+  }, [stats, nodeTier, challengeRoundsAvailable]);
 
   // Update check — fire-and-forget on mount
   useEffect(() => {
@@ -222,6 +403,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         const cfg = getConfig();
         const identity = loadIdentity(cfg.node_identity_file);
         if (!identity) {
+          setRuntimeStatus("STOPPED");
           setError("No identity found. Run onboarding first.");
           return;
         }
@@ -229,22 +411,23 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         // Validate config before proceeding
         const cfgCheck = validateConfig(cfg as unknown as Record<string, string>);
         if (!cfgCheck.ok) {
+          setRuntimeStatus("STOPPED");
           setError(`Config error: ${cfgCheck.error}`);
           return;
         }
 
-        log("Validating model...");
         const modelCheck = await validateModel(cfg as unknown as Record<string, string>);
         if (!modelCheck.ok) {
+          setRuntimeStatus("STOPPED");
           setError(`Config error: ${modelCheck.error}`);
           return;
         }
-        log("✓ Configuration valid");
 
         viewerBus.setState("AUTHENTICATING");
         const c = new FortyTwoClient();
         await c.login(identity.node_id, identity.node_secret);
         setClient(c);
+        setRuntimeStatus("RUNNING");
 
         const name = cfg.node_name || cfg.node_display_name || "Agent";
         setAgentName(name);
@@ -254,43 +437,62 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
         await initViewerBus(c, cfg, identity.node_id);
 
+        const challengeCtx = createChallengeContext(c);
         let cycles = 0;
+        // Inference-down guard: skip cycles until a cheap ping succeeds.
+        let inferenceDown = false;
         while (!cancelled) {
           const cycleStart = Date.now();
           try {
-            const available = await checkBalance(c);
-            if (!cancelled) setBalance(available);
-            if (available < cfg.min_balance) {
-              throw new InsufficientFundsError(
-                `Insufficient FOR balance: ${available.toFixed(2)} available, ${cfg.min_balance.toFixed(2)} required`,
-              );
+            if (inferenceDown) {
+              log("Inference was down — probing with ping...");
+              if (await pingLlm()) {
+                log("✓ Inference restored, resuming work");
+                inferenceDown = false;
+                setRuntimeStatus("RUNNING");
+              } else {
+                log("✕ Inference still unavailable — skipping cycle");
+                setRuntimeStatus("STOPPED");
+              }
             }
 
-            const count = await runCycle(c);
-            cycles++;
-            viewerBus.updateStats({ cycles });
-            if (count > 0) log(`✓ Processed ${count} items this cycle`);
+            if (!inferenceDown) {
+              setRuntimeStatus("RUNNING");
+              const available = await checkBalance(c);
+              if (!cancelled) setBalance(available);
+              const capability = await fetchCapability(c);
+              if (!cancelled && capability) {
+                setCapabilityRank(capability.capability_rank);
+                setNodeTier(capability.node_tier);
+                setDeadLocked(capability.is_dead_locked);
+              }
+
+              // `min_balance` gates Capable nodes only. Challengers are funded
+              // from `challenge_locked`, so a zero `available` is expected.
+              if (capability.node_tier === "capable" && available < cfg.min_balance) {
+                const msg = `Low balance: ${available.toFixed(2)} FOR < ${cfg.min_balance.toFixed(2)} required. Worker idle — run 'fortytwo reset --yes' manually.`;
+                log(`⚠ ${msg}`);
+                viewerBus.pushError(msg);
+              } else {
+                const count = await runCycle(c, capability, challengeCtx);
+                cycles++;
+                viewerBus.updateStats({ cycles });
+                if (count > 0) log(`✓ Processed ${count} items this cycle`);
+              }
+            }
           } catch (err) {
             if (cancelled) return;
-            if (err instanceof InsufficientFundsError) {
-              log(`✕ ${err.message} — resetting account...`);
-              viewerBus.pushError(err.message);
-              await resetAccount(c, pushLine);
-              log("✓ Account reset complete!");
-              continue;
-            }
             const errMsg = (err as Error).message ?? String(err);
-            if (errMsg.toLowerCase().includes("inactive") || errMsg.toLowerCase().includes("deactivated")) {
-              log(`Account deactivated — reactivating...`);
-              viewerBus.updateStats({ accountInactive: true });
-              await reactivateAccount(c, identity.node_id, identity.node_secret);
-              await c.login(identity.node_id, identity.node_secret);
-              viewerBus.updateStats({ accountInactive: false });
-              log("✓ Reactivation complete!");
-              continue;
+            if (err instanceof LlmFailureError) {
+              inferenceDown = true;
+              setRuntimeStatus("STOPPED");
+              log(`⚠ Inference unavailable — pausing until ping succeeds. (${errMsg})`);
+              viewerBus.pushError(`Inference unavailable: ${errMsg}`);
+            } else {
+              setRuntimeStatus("STOPPED");
+              log(`✕ Error in cycle: ${err}`);
+              viewerBus.pushError(errMsg);
             }
-            log(`✕ Error in cycle: ${err}`);
-            viewerBus.pushError(errMsg);
           }
 
           if (cancelled) return;
@@ -311,11 +513,13 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
         }
       } catch (err) {
         if (!cancelled) {
+          setRuntimeStatus("STOPPED");
           setError(String(err));
           viewerBus.setState("ERROR");
           viewerBus.pushError(String(err));
         }
       } finally {
+        setRuntimeStatus("STOPPED");
         viewerBus.setRunning(false);
       }
     })();
@@ -335,7 +539,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
     ? `Self-hosted ${cfg.self_hosted_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}`
     : "OpenRouter";
 
-  const displayName = truncateName(agentName.toUpperCase());
+  const displayName = truncateName(agentName.toUpperCase(), 44);
   const intScore = profile ? formatNumber(profile.intelligenceScore, 4) : "—";
   const jdgScore = profile ? formatNumber(profile.judgingScore, 3) : "—";
 
@@ -349,40 +553,153 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const jStr = stats ? formatNumber(stats.judgments) : "—";
   const jWonStr = stats ? formatNumber(stats.judgmentsWon) : "—";
   const jRateStr = stats ? `${Math.round(stats.accuracy)}%` : "—";
+  const cTotal = stats ? stats.capabilityWins + stats.capabilityLosses : 0;
+  const cRateStr = stats && cTotal > 0
+    ? `${Math.round((stats.capabilityWins / cTotal) * 100)}%`
+    : null;
   const balStr = balance !== null ? formatNumber(balance) : "—";
   const stakedStr = staked !== null ? formatNumber(staked) : "—";
+  const panelWidth = Math.max(40, termCols - 8);
+  const columnLeftWidth = Math.min(40, Math.max(28, Math.floor(panelWidth * 0.55)));
+  const capRankValue = formatCapabilityRank(capabilityRank);
+  const capRankSuffix = "/42";
+  const capRankStr = `${capRankValue}${capRankSuffix}`;
+  const capBar = buildCapabilityBar(capabilityRank, 42);
+  const headerDisplay = fitLine(`${displayName} · ${roleDisplay}`, panelWidth);
+  const tierTitle = nodeTier === "capable"
+    ? "CAPABLE TIER"
+    : nodeTier === "challenger"
+      ? "CHALLENGER TIER"
+      : "NODE TIER";
+  const tierDetail = nodeTier === "capable"
+    ? `INT ${intScore} · JDG ${jdgScore}`
+    : nodeTier === "challenger"
+      ? (cRateStr
+        ? `CAPABILITY WIN RATE ${cRateStr} (${stats!.capabilityWins}/${cTotal})`
+        : "PASS CAPABILITY CHALLENGE, UNLOCK FULL FUNCTIONALITY")
+      : "INITIALIZING";
+  const tierColor = nodeTier === "capable" ? COLORS.WHITE : COLORS.GREY_LIGHT;
+  const tierTitleColor = nodeTier === "capable" ? COLORS.BLUE_CONTENT : COLORS.WHITE;
+  const statusTag = runtimeStatus === "STOPPED" ? "STOPPED" : "";
+  const leftQ = `${padCell("Q", qStr, 12)}${padCell("fin", finStr, 12)}`;
+  const leftA = `${padCell("A", aStr, 12)}${padCell("won", aWonStr, 12)}rate ${aRateStr}`;
+  const leftJ = `${padCell("J", jStr, 12)}${padCell("won", jWonStr, 12)}rate ${jRateStr}`;
+  const challengeRoundLine = challengeRoundStats
+    ? fitLine(
+      `${padCell("A", formatNumber(challengeRoundStats.answers), 12)}${padCell("won", formatNumber(challengeRoundStats.wins), 12)}rate ${challengeRoundStats.winRate}% /current challenge only`,
+      panelWidth,
+    )
+    : null;
+  const scoreLine1 = makeColumnParts(leftQ, providerStr, panelWidth, columnLeftWidth);
+  const scoreLine2 = makeColumnParts(leftA, cfg.model_name, panelWidth, columnLeftWidth);
+  const scoreLine3 = makeColumnParts(
+    leftJ,
+    `Poll ${cfg.poll_interval}s  Concurrency ${llmActive}/${cfg.llm_concurrency}`,
+    panelWidth,
+    columnLeftWidth,
+  );
+  const capBarDisplay = fitLine(
+    capBar,
+    panelWidth - (statusTag ? statusTag.length + 1 : 0) - capRankStr.length - 1,
+  );
+  const watchUrl = "http://127.0.0.1:4242/";
 
-  const versionText = ` App Fortytwo Client v${VERSION} ──`;
-  const centerMarker = " ::|| ";
-  const leftDashes = Math.floor((termCols - centerMarker.length) / 2);
-  const rightTotal = termCols - leftDashes - centerMarker.length;
+  const versionText = ` Node Fortytwo v${VERSION} ──`;
+  const leftDashes = Math.floor((termCols) / 2);
+  const rightTotal = termCols - leftDashes;
   const rightDashes = Math.max(0, rightTotal - versionText.length);
   const topSep = "─".repeat(termCols);
 
   return (
     <Box flexDirection="column">
-      <Text color={COLORS.BLUE_FRAME} bold>╔═════════ <Text color={COLORS.WHITE} bold>{displayName}</Text> <Text color={COLORS.GREY_LIGHT}><Text color={COLORS.BLUE_CONTENT}>·</Text> INT {intScore} <Text color={COLORS.BLUE_CONTENT}>·</Text> JDG {jdgScore}</Text></Text>
-      <Text color={COLORS.BLUE_FRAME} bold>║</Text>
       <Box>
-        <Box flexDirection="column">
-          {LOGO.map((line, i) => (
-            <Text key={i}><Text color={COLORS.BLUE_FRAME} bold>║</Text> {line}</Text>
-          ))}
-        </Box>
-        <Box flexDirection="column" marginLeft={2}>
-          <Text color={COLORS.BLUE_CONTENT}>{providerStr}</Text>
-          <Text color={COLORS.GREY_LIGHT}>{cfg.model_name}</Text>
-          <Text><Text color={COLORS.BLUE_CONTENT}>Poll</Text> <Text color={COLORS.GREY_LIGHT}>{cfg.poll_interval}s</Text> <Text color={COLORS.GREY_LIGHT}>·</Text> <Text color={COLORS.BLUE_CONTENT}>Concurrency</Text> <Text color={COLORS.GREY_LIGHT}>{llmActive}/{cfg.llm_concurrency}</Text></Text>
-          <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`Q ${qStr}`, 14)}{padRight(`fin ${finStr}`, 14)}</Text></Text>
-          <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`A ${aStr}`, 14)}{padRight(`won ${aWonStr}`, 14)}{`rate ${aRateStr}`}</Text></Text>
-          <Text><Text color={COLORS.GREY_LIGHT}>{padRight(`J ${jStr}`, 14)}{padRight(`won ${jWonStr}`, 14)}{`rate ${jRateStr}`}</Text></Text>
-          <Text><Text color={COLORS.BLUE_CONTENT} bold>FOR</Text> <Text bold>{balStr}</Text>  <Text color={COLORS.GREY_LIGHT}>staked <Text color={COLORS.WHITE}>{stakedStr}</Text></Text></Text>
+        <LogoMark tier={nodeTier} activeDot={activeDot} height={10} />
+        <Box flexDirection="column" marginLeft={1}>
+          <Text bold wrap="truncate-end">
+            {(() => {
+              const dot = " · ";
+              const dotIdx = headerDisplay.indexOf(dot);
+              if (dotIdx < 0) {
+                return <Text color={COLORS.WHITE}>{headerDisplay}</Text>;
+              }
+              const left = headerDisplay.slice(0, dotIdx);
+              const right = headerDisplay.slice(dotIdx + dot.length);
+              return (
+                <>
+                  <Text color={COLORS.WHITE}>{left}</Text>
+                  <Text color={COLORS.BLUE_FRAME}>{dot}</Text>
+                  <Text color={COLORS.WHITE}>{right}</Text>
+                </>
+              );
+            })()}
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={tierTitleColor} bold>{tierTitle}</Text>
+            <Text color={COLORS.BLUE_FRAME}> · </Text>
+            <Text color={tierColor}>{fitLine(tierDetail, panelWidth - tierTitle.length - 3)}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            {statusTag ? <Text color={COLORS.RED}>{statusTag} </Text> : null}
+            <Text color={COLORS.BLUE_FRAME}>{capBarDisplay}</Text>
+            <Text color={COLORS.WHITE}> {capRankValue}</Text>
+            <Text color={COLORS.GREY_LIGHT}>{capRankSuffix}</Text>
+          </Text>
+          {challengeRoundLine ? (
+            <Text color={COLORS.BLUE_FRAME} wrap="truncate-end">{challengeRoundLine}</Text>
+          ) : (
+            <Text> </Text>
+          )}
+          <Text wrap="truncate-end">
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine1.left}</Text>
+            {(() => {
+              const parsed = scoreLine1.right.match(/^(Self-hosted)\s+(.+)$/);
+              if (!parsed) {
+                return <Text color={COLORS.BLUE_FRAME}>{scoreLine1.right}</Text>;
+              }
+              return (
+                <>
+                  <Text color={COLORS.BLUE_FRAME}>{parsed[1]} </Text>
+                  <Text color={COLORS.GREY_LIGHT}>{parsed[2]}</Text>
+                </>
+              );
+            })()}
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine2.left}</Text>
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine2.right}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.GREY_LIGHT}>{scoreLine3.left}</Text>
+            {(() => {
+              const parsed = scoreLine3.right.match(/^Poll\s+(\S+)\s+Concurrency\s+(\S+)$/);
+              if (!parsed) {
+                return <Text color={COLORS.BLUE_FRAME}>{scoreLine3.right}</Text>;
+              }
+              return (
+                <>
+                  <Text color={COLORS.BLUE_FRAME}>Poll </Text>
+                  <Text color={COLORS.GREY_LIGHT}>{parsed[1]}</Text>
+                  <Text color={COLORS.BLUE_FRAME}>  Concurrency </Text>
+                  <Text color={COLORS.GREY_LIGHT}>{parsed[2]}</Text>
+                </>
+              );
+            })()}
+          </Text>
+          <Text> </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.BLUE_FRAME} bold>FOR</Text>
+            <Text color={COLORS.WHITE}> {balStr}</Text>
+            <Text color={COLORS.GREY_LIGHT}> staked</Text>
+            <Text color={COLORS.WHITE}> {stakedStr}</Text>
+          </Text>
+          <Text wrap="truncate-end">
+            <Text color={COLORS.BLUE_FRAME}>WATCH YOUR NODE:</Text>
+            <Text color={COLORS.WHITE}> {watchUrl}</Text>
+          </Text>
+          <Text color={COLORS.GREY_DARK} wrap="truncate-end">{fitLine("", panelWidth)}</Text>
         </Box>
       </Box>
-
-      <Text color={COLORS.BLUE_FRAME} bold>║</Text>
-      <Text color={COLORS.BLUE_FRAME}>╚═════════ <Text color={COLORS.WHITE}>{roleDisplay} <Text color={COLORS.BLUE_CONTENT}>| WATCH YOUR NODE:</Text> <Text color={COLORS.WHITE}>http://127.0.0.1:4242</Text></Text></Text>
-      <Box flexDirection="column" height={visibleCount}>
+      <Box flexDirection="column" height={visibleCount} marginTop={1}>
         {visible.map((line, i) => {
           const globalIdx = offset + i;
           const isCurrent = globalIdx === last && line.trim() !== "";
@@ -393,6 +710,10 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
           );
         })}
       </Box>
+
+      {deadLocked && (
+        <Text color={COLORS.RED}>⚠ Dead lock — no FOR available. Run: fortytwo reset (to get 250 FOR drop)</Text>
+      )}
 
       {error && <Text color={COLORS.RED}>✕ ERROR: {error}</Text>}
 
@@ -405,7 +726,6 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
       <Text>
         <Text color={COLORS.GREY_DARK}>{"─".repeat(leftDashes)}</Text>
-        <Text color={COLORS.WHITE}>{centerMarker}</Text>
         <Text color={COLORS.GREY_DARK}>{"─".repeat(rightDashes)}{versionText}</Text>
       </Text>
     </Box>

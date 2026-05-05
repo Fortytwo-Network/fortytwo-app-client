@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout } from "ink";
 import { TextInput, Select, ThemeProvider, extendTheme, defaultTheme } from "@inkjs/ui";
 import {
   reloadConfig,
@@ -99,19 +99,41 @@ function displayValue(key: string, value: string): string {
   return value;
 }
 
+function displayKey(key: string): string {
+  if (key === "_node_display_name") return "node_display_name";
+  return key;
+}
+
+function fitText(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (text.length <= width) return text;
+  if (width <= 3) return text.slice(0, width);
+  return `${text.slice(0, width - 3)}...`;
+}
+
 type Phase = "input" | "validating" | "validating_creds" | "fetching_models" | "registering" | "importing";
 
 interface OnboardProps {
   onDone: () => void;
   skipToRegistration?: boolean;
   onCancel?: () => void;
+  onStepChange?: (step: { current: number; total: number; label: string } | null) => void;
+  initialSetupMode?: "new" | "import";
 }
 
-export default function Onboard({ onDone, skipToRegistration, onCancel }: OnboardProps) {
-  const [stepIdx, setStepIdx] = useState(0);
-  const [values, setValues] = useState<Record<string, string>>({});
+export default function Onboard({
+  onDone,
+  skipToRegistration,
+  onCancel,
+  onStepChange,
+  initialSetupMode,
+}: OnboardProps) {
+  const [stepIdx, setStepIdx] = useState(initialSetupMode ? 1 : 0);
+  const [values, setValues] = useState<Record<string, string>>(
+    initialSetupMode ? { setup_mode: initialSetupMode } : {},
+  );
   const [inferenceType, setInferenceType] = useState<InferenceType | undefined>();
-  const [setupMode, setSetupMode] = useState<string | undefined>();
+  const [setupMode, setSetupMode] = useState<string | undefined>(initialSetupMode);
   const [phase, setPhase] = useState<Phase>(skipToRegistration ? "registering" : "input");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [regLog, setRegLog] = useState<string[]>([]);
@@ -119,6 +141,8 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFilter, setModelFilter] = useState("");
   const [backFocused, setBackFocused] = useState(false);
+  const { stdout } = useStdout();
+  const [termCols, setTermCols] = useState(stdout.columns ?? 80);
 
   const isLoading = phase !== "input";
   const loader = useLoader(isLoading);
@@ -126,6 +150,29 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   const steps = buildSteps(inferenceType, setupMode);
   const step = steps[stepIdx];
   const canGoBack = stepIdx > 0;
+
+  useEffect(() => {
+    if (!onStepChange) return;
+    if (!step) {
+      onStepChange(null);
+      return;
+    }
+    onStepChange({
+      current: stepIdx + 1,
+      total: steps.length,
+      label: step.label.toUpperCase(),
+    });
+  }, [onStepChange, stepIdx, step?.label, steps.length]);
+
+  useEffect(() => () => onStepChange?.(null), [onStepChange]);
+
+  useEffect(() => {
+    const onResize = () => setTermCols(stdout.columns ?? 80);
+    stdout.on("resize", onResize);
+    return () => { stdout.off("resize", onResize); };
+  }, [stdout]);
+
+  const configPanelWidth = Math.max(56, termCols - 4);
 
   function goBack() {
     if (!canGoBack) return;
@@ -296,18 +343,7 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
         const displayName = cfg.node_display_name || values.node_name || "JudgeNode";
         await registerAgent(client, displayName, (msg) => {
           if (cancelled) return;
-          if (msg.startsWith("~")) {
-            // Replace last line (progress update)
-            const text = msg.slice(1);
-            setRegLog((prev) => {
-              if (prev.length > 0 && prev[prev.length - 1].startsWith("[progress]")) {
-                return [...prev.slice(0, -1), `[progress]${text}`];
-              }
-              return [...prev, `[progress]${text}`];
-            });
-          } else {
-            setRegLog((prev) => [...prev, msg]);
-          }
+          setRegLog((prev) => [...prev, msg]);
         });
 
         if (cancelled) return;
@@ -418,9 +454,6 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   if (phase === "validating_creds") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>
-          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
-        </Text>
         <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking credentials...</Text>
       </Box>
     );
@@ -429,9 +462,6 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   if (phase === "fetching_models") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>
-          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
-        </Text>
         <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking connection and fetching models...</Text>
       </Box>
     );
@@ -440,30 +470,25 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
   if (phase === "validating") {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text>
-          STEP {stepIdx + 1}/{steps.length}: {step!.label.toUpperCase()}
-        </Text>
         <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> Checking model...</Text>
       </Box>
     );
   }
 
   if (phase === "registering" || phase === "importing") {
-    const displayLine = (line: string) => line.replace(/^\[progress]/, "");
     const last = regLog.length - 1;
     const header = phase === "importing" ? "IMPORT NODE" : "REGISTRATION";
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Text bold>▒▓░ {header} ░▓▒</Text>
+        <Text color={COLORS.BLUE_CONTENT} bold>{header}</Text>
         {regLog.length === 0 && <Text><Text color={COLORS.BLUE_FRAME}> {loader} </Text> ⎔ Registering Node...</Text>}
         <Box flexDirection="column">
           {regLog.map((line, i) => {
             const isCurrent = i === last;
-            const text = displayLine(line);
             return (
               <Text key={i} color={isCurrent ? undefined : COLORS.GREY_NEUTRAL}>
-                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "   "}{text}
+                {isCurrent ? <Text color={COLORS.BLUE_FRAME}> {loader} </Text> : "   "}{line}
               </Text>
             );
           })}
@@ -475,18 +500,9 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Text>
-        STEP {stepIdx + 1}/{steps.length}
-      </Text>
-
       {validationError && (
         <Text color={COLORS.RED}>{validationError}</Text>
       )}
-
-      <Text>
-        {step!.label}
-        {step!.placeholder ? <Text color={COLORS.GREY_NEUTRAL}> ({step!.placeholder})</Text> : null}
-      </Text>
 
       {isModelAutocomplete ? (() => {
         const MAX_SHOWN = 5;
@@ -584,12 +600,28 @@ export default function Onboard({ onDone, skipToRegistration, onCancel }: Onboar
 
       {Object.keys(values).length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={COLORS.GREY_NEUTRAL}>─── configured ───</Text>
-          {Object.entries(values).map(([k, v]) => (
-            <Text key={k} color={COLORS.GREY_NEUTRAL}>
-              {k}: {displayValue(k, v)}
-            </Text>
-          ))}
+          {(() => {
+            const entries = Object.entries(values).map(([k, v]) => `${displayKey(k)}: ${displayValue(k, v)}`);
+            const innerWidth = Math.max(20, configPanelWidth - 2);
+            const bodyWidth = Math.max(1, innerWidth - 2);
+            const title = " NODE PROFILE CONFIGURATION ";
+            const topLine = `┌${title}${"─".repeat(Math.max(0, innerWidth - title.length))}┐`;
+            const bottomLine = `└${"─".repeat(innerWidth)}┘`;
+
+            return (
+              <Box flexDirection="column">
+                <Text color={COLORS.GREY_LIGHT} bold>{topLine}</Text>
+                {entries.map((line, i) => (
+                  <Text key={`${line}-${i}`}>
+                    <Text color={COLORS.GREY_LIGHT}>│ </Text>
+                    <Text color={COLORS.GREY_NEUTRAL}>{fitText(line, bodyWidth).padEnd(bodyWidth, " ")}</Text>
+                    <Text color={COLORS.GREY_LIGHT}> │</Text>
+                  </Text>
+                ))}
+                <Text color={COLORS.GREY_LIGHT}>{bottomLine}</Text>
+              </Box>
+            );
+          })()}
         </Box>
       )}
     </Box>
