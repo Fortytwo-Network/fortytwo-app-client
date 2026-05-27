@@ -8,7 +8,7 @@ import {
   reloadConfig,
 } from "./config.js";
 import { loadIdentity, registerAgent, resetAccount } from "./identity.js";
-import { FortyTwoClient, ApiError } from "./api-client.js";
+import { FortyTwoClient } from "./api-client.js";
 import { main } from "./main.js";
 import { executeCommand } from "./commands.js";
 import { validateModel, buildConfig } from "./setup-logic.js";
@@ -246,41 +246,6 @@ async function loadClient(): Promise<{ client: FortyTwoClient; nodeId: string }>
   return { client, nodeId: identity.node_id };
 }
 
-async function cmdAsk(positionals: string[]) {
-  const question = positionals.join(" ").trim();
-  if (!question) {
-    console.error("Usage: fortytwo ask <question>");
-    process.exit(1);
-  }
-
-  const { client, nodeId } = await loadClient();
-
-  // Pre-check: Challenger nodes cannot create queries.
-  const cap = await client.getCapability(nodeId);
-  if (cap.node_tier !== "capable") {
-    console.error(
-      `You are still a Challenger (rank ${cap.capability_rank}/42). ` +
-        `Reach Capability 42 by answering challenges first.`,
-    );
-    process.exit(1);
-    return;
-  }
-
-  const encrypted = Buffer.from(question, "utf-8").toString("base64");
-  try {
-    const res = await client.createQuery(encrypted, "general");
-    console.log(`Question submitted! ID: ${res.id ?? "?"}`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 403) {
-      console.error(
-        "You are still a Challenger. Reach Capability 42 by answering challenges first.",
-      );
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
 async function cmdCapability(positionals: string[]) {
   const sub = positionals[0];
   const { client, nodeId } = await loadClient();
@@ -502,7 +467,6 @@ Usage:
   fortytwo setup [flags]            Register new node
   fortytwo import [flags]           Import existing node
   fortytwo run [-v]                 Run node (headless)
-  fortytwo ask <question>           Submit a question (Capable only)
   fortytwo capability [history]     Show capability rank / tier (or history)
   fortytwo reset --yes              Reset capability to 0 (+250 FOR locked)
   fortytwo challenge list           List active Capability Challenge rounds
@@ -563,9 +527,6 @@ async function run() {
         break;
       case "run":
         await cmdRun();
-        break;
-      case "ask":
-        await cmdAsk(positionals);
         break;
       case "capability":
         await cmdCapability(positionals);

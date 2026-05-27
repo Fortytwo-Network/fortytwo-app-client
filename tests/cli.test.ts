@@ -25,8 +25,9 @@ vi.mock("../src/config.js", () => ({
 const mockClient = {
   nodeId: "agent-1",
   login: vi.fn().mockResolvedValue({}),
-  getAgent: vi.fn().mockResolvedValue({ profile: { node_display_name: "Bot" } }),
-  createQuery: vi.fn().mockResolvedValue({ id: "q-1" }),
+  getAgent: vi
+    .fn()
+    .mockResolvedValue({ profile: { node_display_name: "Bot" } }),
   getCapability: vi.fn().mockResolvedValue({
     agent_id: "agent-1",
     capability_rank: 42,
@@ -41,17 +42,26 @@ const mockClient = {
     drop_amount: "250",
   }),
   listActiveChallengeRounds: vi.fn().mockResolvedValue({
-    items: [], total: 0, page: 1, page_size: 20,
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 20,
   }),
   getChallengeRound: vi.fn().mockResolvedValue({ has_joined: false }),
   joinChallengeRound: vi.fn().mockResolvedValue({
-    content: "Q?", stake_amount: "10", participant_id: "p-1",
+    content: "Q?",
+    stake_amount: "10",
+    participant_id: "p-1",
   }),
   submitChallengeAnswer: vi.fn().mockResolvedValue({
-    id: "ans-1", staked_amount: "10",
+    id: "ans-1",
+    staked_amount: "10",
   }),
   getCapabilityHistory: vi.fn().mockResolvedValue({
-    items: [], total: 0, page: 1, page_size: 20,
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 20,
   }),
 };
 
@@ -60,7 +70,6 @@ vi.mock("../src/api-client.js", () => {
     nodeId = mockClient.nodeId;
     login = mockClient.login;
     getAgent = mockClient.getAgent;
-    createQuery = mockClient.createQuery;
     getCapability = mockClient.getCapability;
     resetCapability = mockClient.resetCapability;
     listActiveChallengeRounds = mockClient.listActiveChallengeRounds;
@@ -81,9 +90,13 @@ vi.mock("../src/api-client.js", () => {
 });
 
 vi.mock("../src/identity.js", () => ({
-  loadIdentity: vi.fn().mockReturnValue({ node_id: "agent-1", node_secret: "sec" }),
+  loadIdentity: vi
+    .fn()
+    .mockReturnValue({ node_id: "agent-1", node_secret: "sec" }),
   saveIdentity: vi.fn(),
-  registerAgent: vi.fn().mockResolvedValue({ node_id: "new-agent", node_secret: "new-sec" }),
+  registerAgent: vi
+    .fn()
+    .mockResolvedValue({ node_id: "new-agent", node_secret: "new-sec" }),
   resetAccount: vi.fn().mockResolvedValue({
     agent_id: "agent-1",
     capability_rank: 0,
@@ -109,7 +122,7 @@ vi.mock("../src/setup-logic.js", () => ({
     inference_type: "openrouter",
     openrouter_api_key: "key",
     self_hosted_api_base: "",
-    fortytwo_api_base: "https://app.fortytwo.network/api",
+    fortytwo_api_base: "https://node.fortytwo.network/api",
     identity_file: "/tmp/identity.json",
     poll_interval: 120,
     model_name: "test",
@@ -133,7 +146,9 @@ vi.mock("../src/profiles.js", () => ({
   switchProfile: vi.fn(),
   deleteProfile: vi.fn(),
   createProfile: vi.fn(),
-  sanitizeProfileName: vi.fn((name: string) => name.toLowerCase().replace(/\s+/g, "-")),
+  sanitizeProfileName: vi.fn((name: string) =>
+    name.toLowerCase().replace(/\s+/g, "-"),
+  ),
   getProfileDir: vi.fn().mockReturnValue("/tmp/.fortytwo/profiles/default"),
   profileExists: vi.fn().mockReturnValue(false),
 }));
@@ -160,13 +175,20 @@ describe("cli", () => {
     const { loadIdentity } = await import("../src/identity.js");
     const { validateModel } = await import("../src/setup-logic.js");
     vi.mocked(configExists).mockReturnValue(true);
-    vi.mocked(loadIdentity).mockReturnValue({ node_id: "agent-1", node_secret: "sec" });
+    vi.mocked(loadIdentity).mockReturnValue({
+      node_id: "agent-1",
+      node_secret: "sec",
+    });
     vi.mocked(validateModel).mockResolvedValue({ ok: true });
     mockClient.login.mockResolvedValue({});
-    mockClient.getAgent.mockResolvedValue({ profile: { node_display_name: "Bot" } });
+    mockClient.getAgent.mockResolvedValue({
+      profile: { node_display_name: "Bot" },
+    });
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation(() => undefined as never);
   });
 
   afterEach(() => {
@@ -184,7 +206,7 @@ describe("cli", () => {
       expect(output).toContain("setup");
       expect(output).toContain("import");
       expect(output).toContain("run");
-      expect(output).toContain("ask");
+      expect(output).toContain("capability");
     });
   });
 
@@ -206,7 +228,9 @@ describe("cli", () => {
     it("config set calls executeCommand", async () => {
       const { executeCommand } = await import("../src/commands.js");
       await runCli(["config", "set", "node_role", "ANSWERER"]);
-      expect(executeCommand).toHaveBeenCalledWith("/config set node_role ANSWERER");
+      expect(executeCommand).toHaveBeenCalledWith(
+        "/config set node_role ANSWERER",
+      );
     });
 
     it("config set without key/value exits", async () => {
@@ -222,11 +246,16 @@ describe("cli", () => {
 
   describe("setup", () => {
     const setupFlags = [
-      "--node-name", "TestBot",
-      "--inference-type", "openrouter",
-      "--api-key", "sk-or-xxx",
-      "--model-name", "test-model",
-      "--node-role", "JUDGE",
+      "--node-name",
+      "TestBot",
+      "--inference-type",
+      "openrouter",
+      "--api-key",
+      "sk-or-xxx",
+      "--model-name",
+      "test-model",
+      "--node-role",
+      "JUDGE",
       "--skip-validation",
     ];
 
@@ -242,39 +271,119 @@ describe("cli", () => {
 
     it("validates model when no --skip-validation", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
-      await runCli(["setup", "--node-name", "B", "--inference-type", "openrouter", "--openrouter-api-key", "k", "--model-name", "m", "--node-role", "JUDGE"]);
+      await runCli([
+        "setup",
+        "--node-name",
+        "B",
+        "--inference-type",
+        "openrouter",
+        "--openrouter-api-key",
+        "k",
+        "--model-name",
+        "m",
+        "--node-role",
+        "JUDGE",
+      ]);
       expect(validateModel).toHaveBeenCalled();
     });
 
     it("exits on validation failure", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
-      vi.mocked(validateModel).mockResolvedValue({ ok: false, error: "not found" });
-      await runCli(["setup", "--node-name", "B", "--inference-type", "openrouter", "--openrouter-api-key", "k", "--model-name", "m", "--node-role", "JUDGE"]);
+      vi.mocked(validateModel).mockResolvedValue({
+        ok: false,
+        error: "not found",
+      });
+      await runCli([
+        "setup",
+        "--node-name",
+        "B",
+        "--inference-type",
+        "openrouter",
+        "--openrouter-api-key",
+        "k",
+        "--model-name",
+        "m",
+        "--node-role",
+        "JUDGE",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on missing --name flag", async () => {
-      await runCli(["setup", "--inference-type", "openrouter", "--model-name", "m", "--node-role", "JUDGE"]);
+      await runCli([
+        "setup",
+        "--inference-type",
+        "openrouter",
+        "--model-name",
+        "m",
+        "--node-role",
+        "JUDGE",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on invalid inference type", async () => {
-      await runCli(["setup", "--node-name", "B", "--inference-type", "invalid", "--model-name", "m", "--node-role", "JUDGE"]);
+      await runCli([
+        "setup",
+        "--node-name",
+        "B",
+        "--inference-type",
+        "invalid",
+        "--model-name",
+        "m",
+        "--node-role",
+        "JUDGE",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on invalid role", async () => {
-      await runCli(["setup", "--node-name", "B", "--inference-type", "openrouter", "--openrouter-api-key", "k", "--model-name", "m", "--node-role", "INVALID"]);
+      await runCli([
+        "setup",
+        "--node-name",
+        "B",
+        "--inference-type",
+        "openrouter",
+        "--openrouter-api-key",
+        "k",
+        "--model-name",
+        "m",
+        "--node-role",
+        "INVALID",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("requires self-hosted-api-base for local inference", async () => {
-      await runCli(["setup", "--node-name", "B", "--inference-type", "self-hosted", "--model-name", "m", "--node-role", "JUDGE"]);
+      await runCli([
+        "setup",
+        "--node-name",
+        "B",
+        "--inference-type",
+        "self-hosted",
+        "--model-name",
+        "m",
+        "--node-role",
+        "JUDGE",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("works with local inference", async () => {
-      await runCli(["setup", "--node-name", "B", "--inference-type", "self-hosted", "--self-hosted-api-base", "http://localhost:11434/v1", "--model-name", "m", "--node-role", "JUDGE", "--skip-validation"]);
+      await runCli([
+        "setup",
+        "--node-name",
+        "B",
+        "--inference-type",
+        "self-hosted",
+        "--self-hosted-api-base",
+        "http://localhost:11434/v1",
+        "--model-name",
+        "m",
+        "--node-role",
+        "JUDGE",
+        "--skip-validation",
+      ]);
       const { createProfile } = await import("../src/profiles.js");
       expect(createProfile).toHaveBeenCalled();
     });
@@ -282,12 +391,18 @@ describe("cli", () => {
 
   describe("import", () => {
     const importFlags = [
-      "--node-id", "uuid-123",
-      "--node-secret", "sec-456",
-      "--inference-type", "openrouter",
-      "--openrouter-api-key", "sk-or-xxx",
-      "--model-name", "test-model",
-      "--node-role", "JUDGE",
+      "--node-id",
+      "uuid-123",
+      "--node-secret",
+      "sec-456",
+      "--inference-type",
+      "openrouter",
+      "--openrouter-api-key",
+      "sk-or-xxx",
+      "--model-name",
+      "test-model",
+      "--node-role",
+      "JUDGE",
       "--skip-validation",
     ];
 
@@ -305,18 +420,58 @@ describe("cli", () => {
     });
 
     it("exits on invalid inference type", async () => {
-      await runCli(["import", "--node-id", "a", "--node-secret", "s", "--inference-type", "bad", "--model-name", "m", "--node-role", "JUDGE"]);
+      await runCli([
+        "import",
+        "--node-id",
+        "a",
+        "--node-secret",
+        "s",
+        "--inference-type",
+        "bad",
+        "--model-name",
+        "m",
+        "--node-role",
+        "JUDGE",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("exits on invalid role", async () => {
-      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "BAD"]);
+      await runCli([
+        "import",
+        "--node-id",
+        "a",
+        "--secret",
+        "s",
+        "--inference-type",
+        "openrouter",
+        "--api-key",
+        "k",
+        "--model",
+        "m",
+        "--role",
+        "BAD",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("validates model when no --skip-validation", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
-      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
+      await runCli([
+        "import",
+        "--node-id",
+        "a",
+        "--secret",
+        "s",
+        "--inference-type",
+        "openrouter",
+        "--api-key",
+        "k",
+        "--model",
+        "m",
+        "--role",
+        "JUDGE",
+      ]);
       expect(validateModel).toHaveBeenCalled();
     });
 
@@ -329,13 +484,45 @@ describe("cli", () => {
 
     it("exits on import validation failure", async () => {
       const { validateModel } = await import("../src/setup-logic.js");
-      vi.mocked(validateModel).mockResolvedValue({ ok: false, error: "bad model" });
-      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "openrouter", "--api-key", "k", "--model", "m", "--role", "JUDGE"]);
+      vi.mocked(validateModel).mockResolvedValue({
+        ok: false,
+        error: "bad model",
+      });
+      await runCli([
+        "import",
+        "--node-id",
+        "a",
+        "--secret",
+        "s",
+        "--inference-type",
+        "openrouter",
+        "--api-key",
+        "k",
+        "--model",
+        "m",
+        "--role",
+        "JUDGE",
+      ]);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
     it("works with local inference", async () => {
-      await runCli(["import", "--node-id", "a", "--secret", "s", "--inference-type", "self-hosted", "--self-hosted-api-base", "http://localhost:11434/v1", "--model", "m", "--role", "JUDGE", "--skip-validation"]);
+      await runCli([
+        "import",
+        "--node-id",
+        "a",
+        "--secret",
+        "s",
+        "--inference-type",
+        "self-hosted",
+        "--self-hosted-api-base",
+        "http://localhost:11434/v1",
+        "--model",
+        "m",
+        "--role",
+        "JUDGE",
+        "--skip-validation",
+      ]);
       const { createProfile } = await import("../src/profiles.js");
       expect(createProfile).toHaveBeenCalled();
     });
@@ -360,62 +547,6 @@ describe("cli", () => {
       vi.mocked(loadIdentity).mockReturnValue(null);
       await runCli(["run"]);
       expect(exitSpy).toHaveBeenCalledWith(1);
-    });
-  });
-
-  describe("ask", () => {
-    it("submits a question", async () => {
-      await runCli(["ask", "What", "is", "2+2?"]);
-      expect(mockClient.login).toHaveBeenCalled();
-      expect(mockClient.createQuery).toHaveBeenCalled();
-    });
-
-    it("exits when no question", async () => {
-      await runCli(["ask"]);
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    });
-
-    it("exits when no config", async () => {
-      const { configExists } = await import("../src/config.js");
-      vi.mocked(configExists).mockReturnValue(false);
-      await runCli(["ask", "test"]);
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    });
-
-    it("exits when no identity", async () => {
-      const { loadIdentity } = await import("../src/identity.js");
-      vi.mocked(loadIdentity).mockReturnValue(null);
-      await runCli(["ask", "test"]);
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    });
-
-    it("blocks Challenger via capability pre-check", async () => {
-      mockClient.getCapability.mockResolvedValue({
-        agent_id: "agent-1",
-        capability_rank: 10,
-        node_tier: "challenger",
-        is_dead_locked: false,
-      });
-      await runCli(["ask", "What"]);
-      expect(mockClient.createQuery).not.toHaveBeenCalled();
-      expect(exitSpy).toHaveBeenCalledWith(1);
-      const errOut = errorSpy.mock.calls.map((c) => c[0]).join("\n");
-      expect(errOut).toContain("Challenger");
-    });
-
-    it("surfaces 403 from createQuery as friendly message", async () => {
-      mockClient.getCapability.mockResolvedValue({
-        agent_id: "agent-1",
-        capability_rank: 42,
-        node_tier: "capable",
-        is_dead_locked: false,
-      });
-      const { ApiError } = await import("../src/api-client.js");
-      mockClient.createQuery.mockRejectedValue(new ApiError(403, "Challenger nodes cannot create queries."));
-      await runCli(["ask", "Hi"]);
-      expect(exitSpy).toHaveBeenCalledWith(1);
-      const errOut = errorSpy.mock.calls.map((c) => c[0]).join("\n");
-      expect(errOut).toContain("Challenger");
     });
   });
 
@@ -461,7 +592,10 @@ describe("cli", () => {
 
     it("prints a message when history is empty", async () => {
       mockClient.getCapabilityHistory.mockResolvedValue({
-        items: [], total: 0, page: 1, page_size: 20,
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
       });
       await runCli(["capability", "history"]);
       const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
@@ -493,21 +627,25 @@ describe("cli", () => {
   describe("challenge command", () => {
     it("list prints rounds", async () => {
       mockClient.listActiveChallengeRounds.mockResolvedValue({
-        items: [{
-          id: "round-1",
-          foundation_pool_id: "fp-1",
-          content: "?",
-          status: "active",
-          starts_at: "2026-04-13T10:00:00Z",
-          ends_at: "2026-04-13T12:00:00Z",
-          for_budget_total: "100",
-          settled_at: null,
-          winners_count: 0,
-          reward_per_winner: "10",
-          created_at: "2026-04-13T10:00:00Z",
-          has_answered: false,
-        }],
-        total: 1, page: 1, page_size: 20,
+        items: [
+          {
+            id: "round-1",
+            foundation_pool_id: "fp-1",
+            content: "?",
+            status: "active",
+            starts_at: "2026-04-13T10:00:00Z",
+            ends_at: "2026-04-13T12:00:00Z",
+            for_budget_total: "100",
+            settled_at: null,
+            winners_count: 0,
+            reward_per_winner: "10",
+            created_at: "2026-04-13T10:00:00Z",
+            has_answered: false,
+          },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 20,
       });
       await runCli(["challenge", "list"]);
       const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
@@ -517,7 +655,10 @@ describe("cli", () => {
 
     it("list says so when no rounds", async () => {
       mockClient.listActiveChallengeRounds.mockResolvedValue({
-        items: [], total: 0, page: 1, page_size: 20,
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
       });
       await runCli(["challenge", "list"]);
       const out = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
@@ -526,15 +667,28 @@ describe("cli", () => {
 
     it("auto-joins then submits an answer", async () => {
       mockClient.getChallengeRound.mockResolvedValue({ has_joined: false });
-      mockClient.joinChallengeRound.mockResolvedValue({ content: "Q?", stake_amount: "10" });
+      mockClient.joinChallengeRound.mockResolvedValue({
+        content: "Q?",
+        stake_amount: "10",
+      });
       mockClient.submitChallengeAnswer.mockResolvedValue({
-        id: "ans-1", staked_amount: "10", round_id: "r1", agent_id: "a",
-        content: "Yes", is_correct: null, capability_delta: 0,
-        reward_amount: "0", submitted_at: "", validated_at: null,
+        id: "ans-1",
+        staked_amount: "10",
+        round_id: "r1",
+        agent_id: "a",
+        content: "Yes",
+        is_correct: null,
+        capability_delta: 0,
+        reward_amount: "0",
+        submitted_at: "",
+        validated_at: null,
       });
       await runCli(["challenge", "answer", "r1", "Yes"]);
       expect(mockClient.joinChallengeRound).toHaveBeenCalledWith("r1");
-      expect(mockClient.submitChallengeAnswer).toHaveBeenCalledWith("r1", "Yes");
+      expect(mockClient.submitChallengeAnswer).toHaveBeenCalledWith(
+        "r1",
+        "Yes",
+      );
     });
 
     it("skips join when already joined", async () => {
@@ -542,7 +696,10 @@ describe("cli", () => {
       mockClient.submitChallengeAnswer.mockResolvedValue({ id: "ans-1" });
       await runCli(["challenge", "answer", "r1", "Yes"]);
       expect(mockClient.joinChallengeRound).not.toHaveBeenCalled();
-      expect(mockClient.submitChallengeAnswer).toHaveBeenCalledWith("r1", "Yes");
+      expect(mockClient.submitChallengeAnswer).toHaveBeenCalledWith(
+        "r1",
+        "Yes",
+      );
     });
 
     it("answer exits when round_id or answer missing", async () => {

@@ -986,29 +986,12 @@ export default function AgenticVision() {
       <div className="flex flex-1 px-8 gap-8 overflow-hidden">
         <div className="w-[304px] shrink-0 flex flex-col gap-6 overflow-y-auto">
           <div className="flex flex-col gap-1">
-            <div className="flex gap-1">
-              <a
-                href="https://app.fortytwo.network/queries/create"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 bg-ft-blue p-3 flex flex-col gap-4 hover:opacity-90 transition-opacity"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="M8 1.5V14.5M1.5 8H14.5"
-                    stroke="white"
-                    strokeWidth="1.5"
-                  />
-                </svg>
-                <span className="text-[15px] text-white tracking-[0.15px]">
-                  Ask Fortytwo
-                </span>
-              </a>
+            <div className="flex">
               <a
                 href={
                   config?.agentId
-                    ? `https://app.fortytwo.network/agents/${config.agentId}`
-                    : "https://app.fortytwo.network"
+                    ? `https://node.fortytwo.network/agents/${config.agentId}`
+                    : "https://node.fortytwo.network"
                 }
                 target="_blank"
                 rel="noopener noreferrer"

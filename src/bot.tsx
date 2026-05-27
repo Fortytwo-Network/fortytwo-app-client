@@ -5,7 +5,7 @@ import { CommandInput } from "./command-input.js";
 import { get as getConfig } from "./config.js";
 import { COLORS } from "./constants.js";
 import { setLogFn, setVerbose, log, sleep, formatNumber, truncateName, getRoleLabel } from "./utils.js";
-import { FortyTwoClient, ApiError } from "./api-client.js";
+import { FortyTwoClient } from "./api-client.js";
 import { loadIdentity } from "./identity.js";
 import { runCycle, checkBalance, fetchCapability, initViewerBus } from "./main.js";
 import { createChallengeContext, LlmFailureError } from "./capability-challenge.js";
@@ -169,40 +169,6 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
 
     const stripped = raw.startsWith("/") ? raw.slice(1) : raw;
 
-    if (stripped.startsWith("ask ") || stripped === "ask") {
-      const question = stripped.slice(4).trim();
-      if (!question) {
-        pushLine("Usage: /ask <question>");
-        return;
-      }
-      if (!client) {
-        pushLine("Not connected yet, wait for login.");
-        return;
-      }
-      if (nodeTier && nodeTier !== "capable") {
-        pushLine(
-          `✕ You are still a Challenger${
-            capabilityRank !== null ? ` (${capabilityRank}/42)` : ""
-          }. Reach Capability 42 by answering challenges first.`,
-        );
-        return;
-      }
-      pushLine(`Submitting question...`);
-      const encrypted = Buffer.from(question, "utf-8").toString("base64");
-      client.createQuery(encrypted, "general")
-        .then((res) => pushLine(`✓ Question submitted! ID: ${res.id ?? "?"}`))
-        .catch((err) => {
-          if (err instanceof ApiError && err.status === 403) {
-            pushLine(
-              "✕ Challenger nodes cannot create queries. Reach Capability 42 first.",
-            );
-          } else {
-            pushLine(`✕ Error: ${err}`);
-          }
-        });
-      return;
-    }
-
     if (stripped === "capability" || stripped === "capability show") {
       if (!client) { pushLine("Not connected yet, wait for login."); return; }
       client.getCapability(client.nodeId)
@@ -276,7 +242,7 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
     if (creating && onCreateProfile) {
       onCreateProfile();
     }
-  }, [pushLine, client, onSwitchProfile, onCreateProfile, nodeTier, capabilityRank]);
+  }, [pushLine, client, onSwitchProfile, onCreateProfile]);
 
 
   // Balance + stats + profile ticker — every 30s
@@ -535,18 +501,12 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const offset = lines.length - visible.length;
   const cfg = getConfig();
 
-  const providerStr = cfg.inference_type === "self-hosted"
-    ? `Self-hosted ${cfg.self_hosted_api_base.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}`
-    : "OpenRouter";
-
   const displayName = truncateName(agentName.toUpperCase(), 44);
   const intScore = profile ? formatNumber(profile.intelligenceScore, 4) : "—";
   const jdgScore = profile ? formatNumber(profile.judgingScore, 3) : "—";
 
   const roleDisplay = getRoleLabel(agentRole || cfg.node_role);
 
-  const qStr = stats ? formatNumber(stats.queries) : "—";
-  const finStr = stats ? formatNumber(stats.queriesCompleted) : "—";
   const aStr = stats ? formatNumber(stats.answers) : "—";
   const aWonStr = stats ? formatNumber(stats.answersWon) : "—";
   const aRateStr = stats ? `${Math.round(stats.winRate)}%` : "—";
@@ -581,7 +541,6 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
   const tierColor = nodeTier === "capable" ? COLORS.WHITE : COLORS.GREY_LIGHT;
   const tierTitleColor = nodeTier === "capable" ? COLORS.BLUE_CONTENT : COLORS.WHITE;
   const statusTag = runtimeStatus === "STOPPED" ? "STOPPED" : "";
-  const leftQ = `${padCell("Q", qStr, 12)}${padCell("fin", finStr, 12)}`;
   const leftA = `${padCell("A", aStr, 12)}${padCell("won", aWonStr, 12)}rate ${aRateStr}`;
   const leftJ = `${padCell("J", jStr, 12)}${padCell("won", jWonStr, 12)}rate ${jRateStr}`;
   const challengeRoundLine = challengeRoundStats
@@ -590,7 +549,6 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
       panelWidth,
     )
     : null;
-  const scoreLine1 = makeColumnParts(leftQ, providerStr, panelWidth, columnLeftWidth);
   const scoreLine2 = makeColumnParts(leftA, cfg.model_name, panelWidth, columnLeftWidth);
   const scoreLine3 = makeColumnParts(
     leftJ,
@@ -650,21 +608,6 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
             <Text> </Text>
           )}
           <Text wrap="truncate-end">
-            <Text color={COLORS.GREY_LIGHT}>{scoreLine1.left}</Text>
-            {(() => {
-              const parsed = scoreLine1.right.match(/^(Self-hosted)\s+(.+)$/);
-              if (!parsed) {
-                return <Text color={COLORS.BLUE_FRAME}>{scoreLine1.right}</Text>;
-              }
-              return (
-                <>
-                  <Text color={COLORS.BLUE_FRAME}>{parsed[1]} </Text>
-                  <Text color={COLORS.GREY_LIGHT}>{parsed[2]}</Text>
-                </>
-              );
-            })()}
-          </Text>
-          <Text wrap="truncate-end">
             <Text color={COLORS.GREY_LIGHT}>{scoreLine2.left}</Text>
             <Text color={COLORS.GREY_LIGHT}>{scoreLine2.right}</Text>
           </Text>
@@ -685,13 +628,13 @@ export default function BotScreen({ onSwitchProfile, onCreateProfile }: BotScree
               );
             })()}
           </Text>
-          <Text> </Text>
           <Text wrap="truncate-end">
             <Text color={COLORS.BLUE_FRAME} bold>FOR</Text>
             <Text color={COLORS.WHITE}> {balStr}</Text>
             <Text color={COLORS.GREY_LIGHT}> staked</Text>
             <Text color={COLORS.WHITE}> {stakedStr}</Text>
           </Text>
+          <Text> </Text>
           <Text wrap="truncate-end">
             <Text color={COLORS.BLUE_FRAME}>WATCH YOUR NODE:</Text>
             <Text color={COLORS.WHITE}> {watchUrl}</Text>

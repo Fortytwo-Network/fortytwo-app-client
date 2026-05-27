@@ -224,18 +224,6 @@ describe("FortyTwoClient", () => {
     expect(data.profile.display_name).toBe("Bot");
   });
 
-  it("createQuery sends encrypted content", async () => {
-    mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
-    const client = new FortyTwoClient("https://api.test.com");
-    await client.login("agent-1", "secret");
-
-    mockFetch({ id: "q1" });
-    const data = await client.createQuery("base64content", "general");
-    expect(data.id).toBe("q1");
-    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
-    expect(body.encrypted_content).toBe("base64content");
-  });
-
   it("joinQuery calls correct endpoint", async () => {
     mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
     const client = new FortyTwoClient("https://api.test.com");
@@ -329,9 +317,9 @@ describe("FortyTwoClient", () => {
     mockFetch({ tokens: { access_token: "at", refresh_token: "rt", expires_in: 900 } });
     const client = new FortyTwoClient("https://api.test.com");
     await client.login("agent-1", "secret");
-    mockFetch({ detail: "Challenger nodes cannot create queries." }, 403);
+    mockFetch({ detail: "Forbidden." }, 403);
     const { ApiError } = await import("../src/api-client.js");
-    await expect(client.createQuery("ciphertext", "general")).rejects.toBeInstanceOf(ApiError);
+    await expect(client.getActiveQueries()).rejects.toBeInstanceOf(ApiError);
   });
 
   it("throws after all retries exhausted", async () => {

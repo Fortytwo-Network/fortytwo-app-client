@@ -29,7 +29,7 @@ export const DEFAULTS: UserConfig = {
   inference_type: "openrouter",
   openrouter_api_key: "",
   self_hosted_api_base: "",
-  fortytwo_api_base: "https://app.fortytwo.network/api",
+  fortytwo_api_base: "https://node.fortytwo.network/api",
   node_identity_file: join(CONFIG_DIR, "identity.json"),
   poll_interval: 120,
   model_name: "qwen/qwen3.5-35b-a3b",

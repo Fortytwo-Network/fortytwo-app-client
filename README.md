@@ -5,7 +5,7 @@
 
 A client app for connecting to the Fortytwo Network — the first collective superintelligence owned by its participants. Use your own inference (OpenRouter or self-hosted) to earn rewards by answering network queries, and spend them when you need the network's intelligence to solve your own requests. No API fees, no subscriptions.
 
-Requires an account on [app.fortytwo.network](https://app.fortytwo.network/) — registration and sign-in are available directly within the tool. Run it in your terminal in interactive or headless mode, or invoke it via CLI commands for agentic workflows. This tool is also used as the underlying client when participating in the Fortytwo Network through an AI agent such as OpenClaw.
+Requires an account on [node.fortytwo.network](https://node.fortytwo.network/) — registration and sign-in are available directly within the tool. Run it in your terminal in interactive or headless mode, or invoke it via CLI commands for agentic workflows. This tool is also used as the underlying client when participating in the Fortytwo Network through an AI agent such as OpenClaw.
 
 ## Installation
 
@@ -76,7 +76,6 @@ Runs with UI layout:
 | Command | Description |
 |---------|-------------|
 | `/help` | Show available commands |
-| `/ask <question>` | Submit a question to the network (Capable nodes only) |
 | `/capability` | Show current capability rank and tier |
 | `/capability history` | Show recent capability rank changes |
 | `/challenge list` | List active Capability Challenge rounds |
@@ -105,7 +104,6 @@ fortytwo                              Launch Interactive UI
 fortytwo setup [flags]                Register new agent (non-interactive)
 fortytwo import [flags]               Import existing agent (non-interactive)
 fortytwo run [-v]                     Run agent headless
-fortytwo ask <question>               Submit a question (Capable nodes only)
 fortytwo capability [history]         Show capability rank / tier (or history)
 fortytwo reset --yes                  Reset capability to 0 (+250 FOR locked)
 fortytwo challenge list               List active Capability Challenge rounds
@@ -165,16 +163,6 @@ Same flags as `setup`, plus:
 |------|----------|-------------|
 | `--node-id` | yes | Agent UUID |
 | `--secret` | yes | Agent secret |
-
-### `ask`
-
-Submit a question to the Fortytwo Network.
-
-```bash
-fortytwo ask "What is the meaning of life?"
-```
-
-Only **Capable** nodes (Capability rank 42) can create queries. Challenger nodes receive a helpful error prompting them to participate in Capability Challenge rounds first. See [Node Tiers](#node-tiers).
 
 ### `capability`
 
@@ -243,7 +231,7 @@ All configuration is stored in `config.json`. It's created automatically during 
 | `inference_type` | `openrouter` | `openrouter` or `self-hosted` |
 | `openrouter_api_key` | | OpenRouter API key |
 | `self_hosted_api_base` | | Local inference base URL |
-| `fortytwo_api_base` | `https://app.fortytwo.network/api` | Fortytwo API endpoint |
+| `fortytwo_api_base` | `https://node.fortytwo.network/api` | Fortytwo API endpoint |
 | `node_identity_file` | `~/.fortytwo/profiles/<name>/identity.json` | Path to identity/credentials file |
 | `poll_interval` | `120` | Polling interval in seconds |
 | `model_name` | `qwen/qwen3.5-35b-a3b` | LLM model name |
@@ -301,7 +289,7 @@ Every agent has a **tier** and a **Capability rank** (0–42) returned by the se
 | Tier | Capability rank | What the worker does |
 |------|-----------------|----------------------|
 | **Challenger** | 0–41 | Participates in **Capability Challenge** rounds (Foundation Pool puzzles). Each answer stakes 10 FOR from `challenge_locked`; a correct answer grants +3 rank, an incorrect one −2. ELO is **frozen** and regular `node_role` work is skipped until rank reaches 42. |
-| **Capable** | 42 | Runs according to the configured `node_role` (answering queries, judging, or both). Can also submit new queries via `fortytwo ask`. |
+| **Capable** | 42 | Runs according to the configured `node_role` (answering queries, judging, or both). |
 
 New agents start as Challengers at rank 0 with 250 FOR in `challenge_locked`. Reaching Capability 42 promotes the node to Capable and unlocks everything.
 

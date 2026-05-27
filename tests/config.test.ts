@@ -22,7 +22,7 @@ describe("config", () => {
     expect(cfg.node_name).toBe("");
     expect(cfg.node_display_name).toBe("");
     expect(cfg.inference_type).toBe("openrouter");
-    expect(cfg.fortytwo_api_base).toBe("https://app.fortytwo.network/api");
+    expect(cfg.fortytwo_api_base).toBe("https://node.fortytwo.network/api");
     expect(cfg.poll_interval).toBe(120);
     expect(cfg.model_name).toBe("qwen/qwen3.5-35b-a3b");
     expect(cfg.llm_concurrency).toBe(40);
@@ -50,7 +50,9 @@ describe("config", () => {
 
   it("loadConfig merges with defaults when file exists", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ node_name: "MyBot", poll_interval: 60 }));
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ node_name: "MyBot", poll_interval: 60 }),
+    );
     const config = await import("../src/config.js");
     const cfg = config.loadConfig();
     expect(cfg.node_name).toBe("MyBot");
@@ -71,7 +73,9 @@ describe("config", () => {
     const config = await import("../src/config.js");
     const cfg = config.get();
     config.saveConfig(cfg);
-    expect(mkdirSync).toHaveBeenCalledWith(expect.any(String), { recursive: true });
+    expect(mkdirSync).toHaveBeenCalledWith(expect.any(String), {
+      recursive: true,
+    });
     expect(writeFileSync).toHaveBeenCalled();
     const written = vi.mocked(writeFileSync).mock.calls[0][1] as string;
     expect(JSON.parse(written).node_role).toBe("JUDGE");
@@ -82,7 +86,9 @@ describe("config", () => {
     const config = await import("../src/config.js");
     expect(config.get().node_name).toBe("");
     vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ node_name: "Reloaded" }));
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ node_name: "Reloaded" }),
+    );
     config.reloadConfig();
     expect(config.get().node_name).toBe("Reloaded");
   });

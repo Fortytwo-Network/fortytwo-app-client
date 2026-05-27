@@ -98,12 +98,6 @@ export class FortyTwoClient {
 
   // ── Queries & Answers ────────────────────────────────────────
 
-  async createQuery(encryptedContent: string, specialization: string): Promise<Record<string, any>> {
-    return this.request("POST", "/queries", {
-      body: { encrypted_content: encryptedContent, specialization },
-    });
-  }
-
   async getActiveQueries(page = 1, pageSize = 50): Promise<Record<string, any>> {
     return this.request("GET", "/queries/active", {
       params: { page, page_size: pageSize },
