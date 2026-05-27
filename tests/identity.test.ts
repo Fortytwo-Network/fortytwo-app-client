@@ -8,31 +8,18 @@ vi.mock("node:fs", () => ({
 
 vi.mock("../src/config.js", () => ({
   get: () => ({
-    identity_file: "/tmp/identity.json",
-    llm_concurrency: 5,
-  }),
-}));
-
-vi.mock("../src/llm.js", () => ({
-  compareForRegistration: vi.fn().mockResolvedValue(1),
-  getLlmConcurrency: vi.fn().mockReturnValue({ active: 0, max: 5 }),
-}));
-
-vi.mock("../src/utils.js", () => ({
-  sleep: vi.fn().mockResolvedValue(undefined),
-  mapWithConcurrency: vi.fn(async (items: any[], _limit: number, fn: Function) => {
-    const results = [];
-    for (let i = 0; i < items.length; i++) {
-      results.push(await fn(items[i], i));
-    }
-    return results;
+    node_identity_file: "/tmp/identity.json",
   }),
 }));
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { generateRsaKeypair, loadIdentity, saveIdentity, registerAgent, resetAccount } from "../src/identity.js";
-import * as llm from "../src/llm.js";
-import { sleep } from "../src/utils.js";
+import {
+  generateRsaKeypair,
+  loadIdentity,
+  saveIdentity,
+  registerAgent,
+  resetAccount,
+} from "../src/identity.js";
 
 describe("identity", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -64,6 +51,14 @@ describe("identity", () => {
       expect(id!.node_id).toBe("a1");
     });
 
+    it("migrates legacy agent_id/secret fields", () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ agent_id: "a1", secret: "s1" }));
+      const id = loadIdentity("id.json");
+      expect(id!.node_id).toBe("a1");
+      expect(id!.node_secret).toBe("s1");
+    });
+
     it("returns null when missing required fields", () => {
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ foo: "bar" }));
@@ -85,193 +80,61 @@ describe("identity", () => {
   });
 
   describe("registerAgent", () => {
-    it("registers on first attempt when passed", async () => {
+    it("registers in one step and saves identity", async () => {
       const client = {
         register: vi.fn().mockResolvedValue({
-          challenge_session_id: "sess",
-          challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-          required_correct: 1,
-        }),
-        completeRegistration: vi.fn().mockResolvedValue({
-          passed: true, agent_id: "new-agent", secret: "new-secret", correct_count: 1,
+          agent_id: "new-agent",
+          secret: "new-secret",
+          capability_rank: 0,
+          node_tier: "challenger",
+          message: "ok",
         }),
       } as any;
 
-      vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
-      const identity = await registerAgent(client, "TestBot", vi.fn());
+      const log = vi.fn();
+      const identity = await registerAgent(client, "TestBot", log);
+
       expect(identity.node_id).toBe("new-agent");
       expect(identity.node_secret).toBe("new-secret");
+      expect(identity.public_key_pem).toContain("BEGIN PUBLIC KEY");
+      expect(identity.private_key_pem).toContain("BEGIN PRIVATE KEY");
       expect(writeFileSync).toHaveBeenCalled();
+      expect(client.register).toHaveBeenCalledTimes(1);
+      expect(client.register).toHaveBeenCalledWith(expect.stringContaining("PUBLIC KEY"), "TestBot");
     });
 
-    it("handles net > 0 (choice 0) and net < 0 (choice 1)", async () => {
+    it("propagates errors from the API", async () => {
       const client = {
-        register: vi.fn().mockResolvedValue({
-          challenge_session_id: "sess",
-          challenges: [
-            { id: "c1", question: "q1", option_a: "a1", option_b: "b1" },
-            { id: "c2", question: "q2", option_a: "a2", option_b: "b2" },
-          ],
-          required_correct: 1,
-        }),
-        completeRegistration: vi.fn().mockResolvedValue({
-          passed: true, agent_id: "a", secret: "s", correct_count: 2,
-        }),
+        register: vi.fn().mockRejectedValue(new Error("boom")),
       } as any;
 
-      // For c1: forward=1, inverse=-1 → net = 1+1 = 2 > 0 → choice 0
-      // For c2: forward=-1, inverse=1 → net = -1-1 = -2 < 0 → choice 1
-      vi.mocked(llm.compareForRegistration)
-        .mockResolvedValueOnce(1)   // c1 forward
-        .mockResolvedValueOnce(-1)  // c1 inverse
-        .mockResolvedValueOnce(-1)  // c2 forward
-        .mockResolvedValueOnce(1);  // c2 inverse
-
-      const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.node_id).toBe("a");
-    });
-
-    it("handles challenge timeout (compareForRegistration throws)", async () => {
-      const client = {
-        register: vi.fn().mockResolvedValue({
-          challenge_session_id: "sess",
-          challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-          required_correct: 1,
-        }),
-        completeRegistration: vi.fn().mockResolvedValue({
-          passed: true, agent_id: "a", secret: "s", correct_count: 1,
-        }),
-      } as any;
-
-      // Reject during parallel phase (2 calls), then succeed during tiebreak
-      vi.mocked(llm.compareForRegistration)
-        .mockRejectedValueOnce(new Error("timeout"))
-        .mockRejectedValueOnce(new Error("timeout"))
-        .mockResolvedValue(1);  // tiebreak succeeds → net becomes non-zero
-      const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.node_id).toBe("a");
-    });
-
-    it("retries when registration fails", async () => {
-      let attempt = 0;
-      const client = {
-        register: vi.fn().mockResolvedValue({
-          challenge_session_id: "sess",
-          challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-          required_correct: 1,
-        }),
-        completeRegistration: vi.fn().mockImplementation(async () => {
-          attempt++;
-          if (attempt < 2) return { passed: false, correct_count: 0 };
-          return { passed: true, agent_id: "a", secret: "s", correct_count: 1 };
-        }),
-      } as any;
-
-      vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
-      const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.node_id).toBe("a");
-      expect(client.completeRegistration).toHaveBeenCalledTimes(2);
-    });
-
-    it("retries on network error", async () => {
-      let attempt = 0;
-      const client = {
-        register: vi.fn().mockImplementation(async () => {
-          attempt++;
-          if (attempt < 2) throw new Error("network");
-          return {
-            challenge_session_id: "sess",
-            challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-            required_correct: 1,
-          };
-        }),
-        completeRegistration: vi.fn().mockResolvedValue({
-          passed: true, agent_id: "a", secret: "s", correct_count: 1,
-        }),
-      } as any;
-
-      vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
-      const identity = await registerAgent(client, "Bot", vi.fn());
-      expect(identity.node_id).toBe("a");
-      expect(sleep).toHaveBeenCalled();
+      await expect(registerAgent(client, "Bot", vi.fn())).rejects.toThrow("boom");
     });
   });
 
   describe("resetAccount", () => {
-    it("resets on first attempt", async () => {
+    it("calls resetCapability and returns response", async () => {
       const client = {
-        startAccountReset: vi.fn().mockResolvedValue({
-          challenge_session_id: "sess",
-          challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-          required_correct: 1,
-          cooldown_minutes: 10,
+        resetCapability: vi.fn().mockResolvedValue({
+          agent_id: "a1",
+          capability_rank: 0,
+          rank_before: 30,
+          challenge_locked: "250",
+          drop_amount: "250",
         }),
-        completeAccountReset: vi.fn().mockResolvedValue({ passed: true }),
       } as any;
 
-      vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
-      await resetAccount(client, vi.fn());
-      expect(client.completeAccountReset).toHaveBeenCalled();
+      const result = await resetAccount(client, vi.fn());
+      expect(client.resetCapability).toHaveBeenCalledTimes(1);
+      expect(result.rank_before).toBe(30);
+      expect(result.drop_amount).toBe("250");
     });
 
-    it("retries when reset fails", async () => {
-      let attempt = 0;
+    it("propagates API errors", async () => {
       const client = {
-        startAccountReset: vi.fn().mockResolvedValue({
-          challenge_session_id: "sess",
-          challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-          required_correct: 1, cooldown_minutes: 0,
-        }),
-        completeAccountReset: vi.fn().mockImplementation(async () => {
-          attempt++;
-          if (attempt < 2) return { passed: false, correct_count: 0 };
-          return { passed: true };
-        }),
+        resetCapability: vi.fn().mockRejectedValue(new Error("cooldown")),
       } as any;
-
-      vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
-      await resetAccount(client, vi.fn());
-      expect(client.completeAccountReset).toHaveBeenCalledTimes(2);
-    });
-
-    it("handles cooldown error", async () => {
-      let attempt = 0;
-      const client = {
-        startAccountReset: vi.fn().mockImplementation(async () => {
-          attempt++;
-          if (attempt < 2) throw new Error("cooldown period");
-          return {
-            challenge_session_id: "sess",
-            challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-            required_correct: 1,
-          };
-        }),
-        completeAccountReset: vi.fn().mockResolvedValue({ passed: true }),
-      } as any;
-
-      vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
-      await resetAccount(client, vi.fn());
-      expect(sleep).toHaveBeenCalledWith(600_000);
-    });
-
-    it("handles generic error with retry", async () => {
-      let attempt = 0;
-      const client = {
-        startAccountReset: vi.fn().mockImplementation(async () => {
-          attempt++;
-          if (attempt < 2) throw new Error("server error");
-          return {
-            challenge_session_id: "sess",
-            challenges: [{ id: "c1", question: "q", option_a: "a", option_b: "b" }],
-            required_correct: 1,
-          };
-        }),
-        completeAccountReset: vi.fn().mockResolvedValue({ passed: true }),
-      } as any;
-
-      vi.mocked(llm.compareForRegistration).mockResolvedValue(1);
-      await resetAccount(client, vi.fn());
-      expect(sleep).toHaveBeenCalledWith(10_000);
+      await expect(resetAccount(client, vi.fn())).rejects.toThrow("cooldown");
     });
   });
 });

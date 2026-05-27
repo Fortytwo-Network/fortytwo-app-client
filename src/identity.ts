@@ -1,11 +1,8 @@
 import { generateKeyPairSync } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import * as config from "./config.js";
-import { sleep, mapWithConcurrency } from "./utils.js";
-import { FortyTwoClient } from "./api-client.js";
-import * as llm from "./llm.js";
-
-const MAX_TIEBREAK_ATTEMPTS = 5;
+import type { FortyTwoClient } from "./api-client.js";
+import type { ResetResponse } from "./api-types.js";
 
 export type LogFn = (msg: string) => void;
 
@@ -43,240 +40,51 @@ export function loadIdentity(path: string): Identity | null {
   }
 }
 
-interface Challenge {
-  id: string | number;
-  question: string;
-  option_a: string;
-  option_b: string;
-}
-
-interface ChallengeResponse {
-  challenge_id: string;
-  choice: number;
-}
-
-async function solveChallenges(challenges: Challenge[], log: LogFn): Promise<ChallengeResponse[]> {
-  const total = challenges.length;
-  let compared = 0;
-  let solved = 0;
-  const concurrency = config.get().llm_concurrency;
-
-  // Phase 1: Run forward (a,b) + inverse (b,a) concurrently for all challenges
-  const CHALLENGE_TIMEOUT = 120_000; // 2 min per challenge
-
-  const pairResults = await mapWithConcurrency(
-    challenges,
-    concurrency,
-    async (ch, idx): Promise<[number, Challenge, number]> => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), CHALLENGE_TIMEOUT);
-      try {
-        const [forward, inverse] = await Promise.all([
-          llm.compareForRegistration(ch.question, ch.option_a, ch.option_b, controller.signal),
-          llm.compareForRegistration(ch.question, ch.option_b, ch.option_a, controller.signal),
-        ]);
-        const result = forward + -inverse;
-        compared++;
-        if (result !== 0) solved++;
-        const { active, max } = llm.getLlmConcurrency();
-        log(`~↳ Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
-        return [idx, ch, result];
-      } catch {
-        compared++;
-        const { active, max } = llm.getLlmConcurrency();
-        log(`~↳ Comparing: ${compared}/${total} (${solved} settled) [LLM ${active}/${max}]`);
-        return [idx, ch, 0];
-      } finally {
-        clearTimeout(timeout);
-      }
-    },
-  );
-
-  // Collect resolved and unresolved
-  const responses = new Map<number, ChallengeResponse>();
-  const unresolved: [number, Challenge, number][] = [];
-
-  for (const [idx, ch, net] of pairResults) {
-    if (net > 0) {
-      responses.set(idx, { challenge_id: String(ch.id), choice: 0 });
-    } else if (net < 0) {
-      responses.set(idx, { challenge_id: String(ch.id), choice: 1 });
-    } else {
-      unresolved.push([idx, ch, net]);
-    }
-  }
-
-  // Phase 2: Sequential tiebreak for unresolved challenges
-  for (let [idx, ch, net] of unresolved) {
-    for (let tb = 1; tb <= MAX_TIEBREAK_ATTEMPTS; tb++) {
-      let score: number;
-      if (Math.random() < 0.5) {
-        score = await llm.compareForRegistration(ch.question, ch.option_a, ch.option_b);
-      } else {
-        score = -(await llm.compareForRegistration(ch.question, ch.option_b, ch.option_a));
-      }
-      net += score;
-      if (net !== 0) break;
-    }
-
-    let choice: number;
-    if (net > 0) choice = 0;
-    else if (net < 0) choice = 1;
-    else choice = Math.random() < 0.5 ? 0 : 1;
-
-    responses.set(idx, { challenge_id: String(ch.id), choice });
-    solved++;
-    const { active, max } = llm.getLlmConcurrency();
-    log(`~↳ Solving: ${solved}/${total} [LLM ${active}/${max}]`);
-  }
-
-  // Return in original order
-  return Array.from({ length: total }, (_, i) => responses.get(i)!);
-}
-
+/**
+ * Register a new agent using the 1-step registration flow (TZ-001).
+ * The server returns `agent_id`, `secret`, `capability_rank` (0) and
+ * `node_tier` ("challenger") directly — no pairwise challenge quiz.
+ */
 export async function registerAgent(
   client: FortyTwoClient,
   displayName = "JudgeNode",
   log: LogFn = console.log,
 ): Promise<Identity> {
-  let attempt = 0;
+  log(`Registering "${displayName}"...`);
 
-  while (true) {
-    attempt++;
-    log(`Registering "${displayName}"`);
-    log(`↳ Attempt ${attempt}`);
+  const { privatePem, publicPem } = generateRsaKeypair();
+  const response = await client.register(publicPem, displayName);
 
-    const { privatePem, publicPem } = generateRsaKeypair();
-
-    try {
-      const challengeData = await client.register(publicPem, displayName);
-      const sessionId = challengeData.challenge_session_id as string;
-      const challenges = challengeData.challenges as Challenge[];
-      const requiredCorrect = (challengeData.required_correct as number) ?? 17;
-
-      log(`~Solving: 0/${challenges.length}`);
-
-      const responses = await solveChallenges(challenges, log);
-      log(`↳ Submitting answers (need ${requiredCorrect} correct)...`);
-      const result = await client.completeRegistration(sessionId, responses);
-
-      if (!result.passed) {
-        const correct = result.correct_count ?? 0;
-        log(`✕ Attempt ${attempt}: ${correct}/${challenges.length} correct (need ${requiredCorrect})`);
-        log(`↳ Retrying in 2s...`);
-        await sleep(2000);
-        continue;
-      }
-
-      const nodeId = String(result.agent_id);
-      const correct = result.correct_count ?? challenges.length;
-      const node_secret = result.secret as string;
-
-      const identity: Identity = {
-        node_id: nodeId,
-        node_secret,
-        public_key_pem: publicPem,
-        private_key_pem: privatePem,
-      };
-      saveIdentity(config.get().node_identity_file, identity);
-      log(`✓ Passed! ${correct}/${challenges.length} correct — Node ID: ${nodeId}`);
-
-      return identity;
-    } catch (err) {
-      log(`✕ Attempt ${attempt}: ${err}`);
-      log(`↳ Retrying in 5s...`);
-      await sleep(5000);
-    }
+  if (!response?.agent_id || !response?.secret) {
+    throw new Error(
+      `Registration failed — server did not return agent_id/secret (got keys: ${
+        response ? Object.keys(response).join(", ") : "none"
+      }). The server may be running the legacy 2-step flow; check fortytwo_api_base.`,
+    );
   }
+
+  const identity: Identity = {
+    node_id: response.agent_id,
+    node_secret: response.secret,
+    public_key_pem: publicPem,
+    private_key_pem: privatePem,
+  };
+  saveIdentity(config.get().node_identity_file, identity);
+  log(`✓ Registered — Node ID: ${response.agent_id} (tier: ${response.node_tier}, rank: ${response.capability_rank})`);
+
+  return identity;
 }
 
-export async function reactivateAccount(
-  client: FortyTwoClient,
-  nodeId: string,
-  nodeSecret: string,
-  log: LogFn = console.log,
-): Promise<void> {
-  let attempt = 0;
-
-  while (true) {
-    attempt++;
-    log(`↳ Reactivation attempt ${attempt}`);
-
-    try {
-      const challengeData = await client.startReactivation(nodeId, nodeSecret);
-      const sessionId = challengeData.challenge_session_id as string;
-      const challenges = challengeData.challenges as Challenge[];
-      const requiredCorrect = (challengeData.required_correct as number) ?? 17;
-
-      log(`~Solving: 0/${challenges.length}`);
-
-      const responses = await solveChallenges(challenges, log);
-      log(`↳ Submitting answers (need ${requiredCorrect} correct)...`);
-      const result = await client.completeReactivation(sessionId, responses);
-
-      if (!result.passed) {
-        const correct = result.correct_count ?? 0;
-        log(`✕ Failed: ${correct}/${challenges.length} correct`);
-        log(`↳ Retrying in 5s...`);
-        await sleep(5000);
-        continue;
-      }
-
-      log(`✓ Reactivation successful! (attempt ${attempt})`);
-      return;
-    } catch (err) {
-      log(`✕ Reactivation attempt ${attempt}: ${err}`);
-      log(`↳ Retrying in 10s...`);
-      await sleep(10_000);
-    }
-  }
-}
-
+/**
+ * Reset the node's capability rank. The server performs a one-shot reset
+ * (no challenge quiz) and drops FOR into `challenge_locked`.
+ */
 export async function resetAccount(
   client: FortyTwoClient,
   log: LogFn = console.log,
-): Promise<void> {
-  let attempt = 0;
-
-  while (true) {
-    attempt++;
-    log(`↳ Reset attempt ${attempt}`);
-
-    try {
-      const challengeData = await client.startAccountReset();
-      const sessionId = challengeData.challenge_session_id as string;
-      const challenges = challengeData.challenges as Challenge[];
-      const requiredCorrect = (challengeData.required_correct as number) ?? 17;
-      const cooldownMinutes = (challengeData.cooldown_minutes as number) ?? 10;
-
-      log(`~Solving: 0/${challenges.length}`);
-
-      const responses = await solveChallenges(challenges, log);
-      log(`↳ Submitting answers (need ${requiredCorrect} correct)...`);
-      const result = await client.completeAccountReset(sessionId, responses);
-
-      if (!result.passed) {
-        const correct = result.correct_count ?? 0;
-        const waitTime = Math.max(cooldownMinutes * 60 * 1000, 5000);
-        log(`✕ Failed: ${correct}/${challenges.length} correct`);
-        log(`↳ Waiting...`);
-        await sleep(waitTime);
-        continue;
-      }
-
-      log(`✓ Reset successful! (attempt ${attempt})`);
-      return;
-    } catch (err) {
-      const msg = String(err).toLowerCase();
-      if (msg.includes("cooldown") || msg.includes("limited")) {
-        log(`✕ Reset attempt ${attempt} hit cooldown`);
-        log(`↳ Waiting 10 min...`);
-        await sleep(600_000);
-      } else {
-        log(`✕ Reset attempt ${attempt}: ${err}`);
-        log(`↳ Retrying in 10s...`);
-        await sleep(10_000);
-      }
-    }
-  }
+): Promise<ResetResponse> {
+  log(`↳ Resetting capability...`);
+  const result = await client.resetCapability();
+  log(`✓ Reset complete — rank ${result.rank_before} → 0, +${result.drop_amount} FOR locked`);
+  return result;
 }

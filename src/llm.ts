@@ -59,9 +59,10 @@ let semaphore: Semaphore | null = null;
 function getSemaphore(): Semaphore {
   const cfg = config.get();
   if (!semaphore) {
-    const max = cfg.inference_type === "self-hosted"
-      ? Math.max(1, Math.floor(cfg.llm_concurrency / 5))
-      : cfg.llm_concurrency;
+    const max =
+      cfg.inference_type === "self-hosted"
+        ? Math.max(1, Math.floor(cfg.llm_concurrency / 5))
+        : cfg.llm_concurrency;
     semaphore = new Semaphore(max);
   }
   return semaphore;
@@ -81,7 +82,7 @@ export function resetLlmClient(): void {
   semaphore = null;
 }
 
-type LlmPurpose = "ranking" | "generation" | "registration" | "other";
+type LlmPurpose = "ranking" | "generation" | "other";
 
 const stats = {
   calls: 0,
@@ -111,12 +112,14 @@ function recordError(purpose: LlmPurpose) {
 export function getLlmStats() {
   const active = semaphore?.activeCount() ?? 0;
   const queued = semaphore?.queuedCount() ?? 0;
-  const rankingAvg = stats.ranking.count > 0
-    ? Math.round(stats.ranking.totalMs / stats.ranking.count)
-    : null;
-  const generationAvg = stats.generation.count > 0
-    ? Math.round(stats.generation.totalMs / stats.generation.count)
-    : null;
+  const rankingAvg =
+    stats.ranking.count > 0
+      ? Math.round(stats.ranking.totalMs / stats.ranking.count)
+      : null;
+  const generationAvg =
+    stats.generation.count > 0
+      ? Math.round(stats.generation.totalMs / stats.generation.count)
+      : null;
   return {
     active,
     queued,
@@ -134,15 +137,19 @@ function getClient(): OpenAI {
   const cfg = config.get();
   const isLocal = cfg.inference_type === "self-hosted";
   openaiClient = new OpenAI({
-    baseURL: isLocal ? cfg.self_hosted_api_base.replace(/\/+$/, "") : OPENROUTER_BASE,
+    baseURL: isLocal
+      ? cfg.self_hosted_api_base.replace(/\/+$/, "")
+      : OPENROUTER_BASE,
     apiKey: isLocal ? "EMPTY" : cfg.openrouter_api_key,
     timeout: cfg.llm_timeout * 1000,
     maxRetries: 2,
-    defaultHeaders: isLocal ? undefined : {
-      "HTTP-Referer": "https://app.fortytwo.network",
-      "X-Title": "Fortytwo",
-      "X-Timeout": String(cfg.llm_timeout),
-    },
+    defaultHeaders: isLocal
+      ? undefined
+      : {
+          "HTTP-Referer": "https://node.fortytwo.network",
+          "X-Title": "Fortytwo",
+          "X-Timeout": String(cfg.llm_timeout),
+        },
   });
   return openaiClient;
 }
@@ -154,37 +161,57 @@ function mapLlmError(err: unknown): Error {
   if (isLocal && cfg.self_hosted_api_base) {
     const base = cfg.self_hosted_api_base;
     if (err instanceof APIConnectionTimeoutError) {
-      return new Error(`Local LLM at ${base} timed out — is the model loaded? Check your inference server.`);
+      return new Error(
+        `Local LLM at ${base} timed out — is the model loaded? Check your inference server.`,
+      );
     }
     if (err instanceof APIConnectionError) {
-      return new Error(`Cannot connect to local LLM at ${base} — is the server running? Start LM Studio / Ollama / vLLM and try again.`);
+      return new Error(
+        `Cannot connect to local LLM at ${base} — is the server running? Start LM Studio / Ollama / vLLM and try again.`,
+      );
     }
     if (err instanceof NotFoundError) {
-      return new Error(`Model "${cfg.model_name}" not found at ${base} — load the model in your inference server first.`);
+      return new Error(
+        `Model "${cfg.model_name}" not found at ${base} — load the model in your inference server first.`,
+      );
     }
   }
 
   if (!isLocal) {
     if (err instanceof RateLimitError) {
-      return new Error(`OpenRouter rate limit exceeded — too many requests. Wait a moment and try again, or reduce llm_concurrency.`);
+      return new Error(
+        `OpenRouter rate limit exceeded — too many requests. Wait a moment and try again, or reduce llm_concurrency.`,
+      );
     }
     if (err instanceof AuthenticationError) {
-      return new Error(`OpenRouter authentication failed — your API key is invalid or expired. Update it with /config set openrouter_api_key <key>.`);
+      return new Error(
+        `OpenRouter authentication failed — your API key is invalid or expired. Update it with /config set openrouter_api_key <key>.`,
+      );
     }
     if (err instanceof PermissionDeniedError) {
-      return new Error(`OpenRouter rejected the request — your input was flagged by moderation for model "${cfg.model_name}".`);
+      return new Error(
+        `OpenRouter rejected the request — your input was flagged by moderation for model "${cfg.model_name}".`,
+      );
     }
     if (err instanceof BadRequestError) {
-      return new Error(`OpenRouter bad request — check your model name "${cfg.model_name}" or request parameters.`);
+      return new Error(
+        `OpenRouter bad request — check your model name "${cfg.model_name}" or request parameters.`,
+      );
     }
     if (err instanceof APIError && err.status === 402) {
-      return new Error(`OpenRouter credits exhausted — add funds at openrouter.ai or switch to a free model.`);
+      return new Error(
+        `OpenRouter credits exhausted — add funds at openrouter.ai or switch to a free model.`,
+      );
     }
     if (err instanceof APIError && (err.status === 502 || err.status === 503)) {
-      return new Error(`OpenRouter: model "${cfg.model_name}" is temporarily unavailable — try again later or switch to another model.`);
+      return new Error(
+        `OpenRouter: model "${cfg.model_name}" is temporarily unavailable — try again later or switch to another model.`,
+      );
     }
     if (err instanceof APIConnectionTimeoutError) {
-      return new Error(`OpenRouter request timed out — the model may be overloaded. Try again or increase llm_timeout.`);
+      return new Error(
+        `OpenRouter request timed out — the model may be overloaded. Try again or increase llm_timeout.`,
+      );
     }
   }
 
@@ -213,7 +240,9 @@ async function callLlmApi(
   try {
     if (signal?.aborted) throw new Error("LLM call aborted");
 
-    verbose(`→ model=${cfg.model_name} msgs=${messages.length} temp=${temperature}`);
+    verbose(
+      `→ model=${cfg.model_name} msgs=${messages.length} temp=${temperature}`,
+    );
 
     const resp = await client.chat.completions.create(
       {
@@ -228,7 +257,9 @@ async function callLlmApi(
     );
 
     const content = (resp.choices[0].message.content ?? "").trim();
-    verbose(`← ${cfg.model_name} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
+    verbose(
+      `← ${cfg.model_name} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`,
+    );
     recordSuccess(purpose, Date.now() - start);
     return content;
   } catch (err) {
@@ -247,44 +278,43 @@ export async function callLlm(
   signal?: AbortSignal,
   purpose: LlmPurpose = "other",
 ): Promise<string> {
-  return callLlmApi([{ role: "user", content: prompt }], retries, 0.3, signal, purpose);
+  return callLlmApi(
+    [{ role: "user", content: prompt }],
+    retries,
+    0.3,
+    signal,
+    purpose,
+  );
 }
 
-export async function compareForRegistration(
-  question: string,
-  optionA: string,
-  optionB: string,
-  signal?: AbortSignal,
-): Promise<number> {
-  const prompt =
-    `######Problem######: \n${question}\n` +
-    `######Solution A######. \n${optionA}\n` +
-    `######Solution B######. \n${optionB}\n` +
-    `######Instruction######:\n` +
-    `Select the best one of the two proposed solutions to the problem. ` +
-    `THEN end output with best solution overall index (A or B) on the new line ` +
-    `(Only letter, nothing else).\n` +
-    `Don't try to re-solve/re-compute/re-think the problem. ` +
-    `Only find flows/mistakes in a proposed solutions and pick the best one (and that not validated/certified by you to be ideal/fully correct).\n` +
-    `If both solutions are equal or you cannot determine which is better, output U.\n` +
-    `######Decision######:`;
+/**
+ * Cheap health-check: sends a 1-token prompt with a short timeout, bypassing
+ * the semaphore and retry machinery. Returns `true` if the inference backend
+ * replied within the deadline, `false` otherwise (timeout, network error,
+ * auth error, model missing, etc.). Meant to gate worker cycles after a
+ * previous LLM failure so we don't burn FOR on unanswerable joins.
+ */
+export async function pingLlm(timeoutMs = 5000): Promise<boolean> {
+  const cfg = config.get();
+  const isLocal = cfg.inference_type === "self-hosted";
+  if (!isLocal && !cfg.openrouter_api_key) return false;
 
   try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await callLlm(prompt, 2, signal, "registration");
-      const letter = parseLastLetter(response, new Set(["A", "B", "U"]));
-      if (letter !== null) {
-        if (letter === "A") return 1;
-        if (letter === "B") return -1;
-        return 0;
-      }
-    }
+    const client = getClient();
+    await client.chat.completions.create(
+      {
+        model: cfg.model_name,
+        messages: [{ role: "user", content: "ok" }],
+        temperature: 0,
+        max_tokens: 1,
+      },
+      { signal: AbortSignal.timeout(timeoutMs), maxRetries: 0 },
+    );
+    return true;
   } catch (err) {
-    verbose(`✗ Registration comparison failed: ${err}`);
-    return 0;
+    verbose(`pingLlm failed: ${err}`);
+    return false;
   }
-
-  return 0;
 }
 
 export async function evaluateGoodEnough(
@@ -404,10 +434,14 @@ export async function generateAnswer(
     const finalTps = elapsed > 0 ? tokenCount / elapsed : 0;
     const roundedTps = Math.round(finalTps * 10) / 10;
 
-    verbose(`← [stream] ${cfg.model_name} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`);
+    verbose(
+      `← [stream] ${cfg.model_name} (${Date.now() - start}ms) ${content.slice(0, 100)}${content.length > 100 ? "..." : ""}`,
+    );
     recordSuccess("generation", Date.now() - start);
 
-    const thinkMatch = content.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
+    const thinkMatch = content.match(
+      /^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/,
+    );
     const thinkingText = thinkMatch ? thinkMatch[1].trim() : content;
     const answerText = thinkMatch ? thinkMatch[2].trim() : content;
 

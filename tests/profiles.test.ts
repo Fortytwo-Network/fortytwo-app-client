@@ -18,7 +18,13 @@ vi.mock("../src/identity.js", () => ({
   loadIdentity: vi.fn().mockReturnValue(null),
 }));
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  rmSync,
+} from "node:fs";
 import { loadIdentity } from "../src/identity.js";
 import { setConfigDir, reloadConfig } from "../src/config.js";
 
@@ -91,10 +97,15 @@ describe("profiles", () => {
     it("creates dir and writes JSON", async () => {
       const { saveProfilesMeta } = await import("../src/profiles.js");
       saveProfilesMeta({ active: "test", profiles: ["test"] });
-      expect(mkdirSync).toHaveBeenCalledWith("/tmp/.fortytwo", { recursive: true });
+      expect(mkdirSync).toHaveBeenCalledWith("/tmp/.fortytwo", {
+        recursive: true,
+      });
       expect(writeFileSync).toHaveBeenCalled();
       const written = vi.mocked(writeFileSync).mock.calls[0][1] as string;
-      expect(JSON.parse(written)).toEqual({ active: "test", profiles: ["test"] });
+      expect(JSON.parse(written)).toEqual({
+        active: "test",
+        profiles: ["test"],
+      });
     });
   });
 
@@ -129,7 +140,8 @@ describe("profiles", () => {
       vi.mocked(readFileSync).mockReturnValue(
         JSON.stringify({ active: "meta-bot", profiles: ["meta-bot"] }),
       );
-      const { getActiveProfileName, setProfileOverride } = await import("../src/profiles.js");
+      const { getActiveProfileName, setProfileOverride } =
+        await import("../src/profiles.js");
       setProfileOverride("flag-bot");
       expect(getActiveProfileName()).toBe("flag-bot");
 
@@ -148,7 +160,7 @@ describe("profiles", () => {
         inference_type: "openrouter" as const,
         openrouter_api_key: "key",
         llm_api_base: "",
-        fortytwo_api_base: "https://app.fortytwo.network/",
+        fortytwo_api_base: "https://node.fortytwo.network/",
         self_hosted_api_base: "",
         node_identity_file: "",
         poll_interval: 120,
@@ -167,30 +179,38 @@ describe("profiles", () => {
         { recursive: true },
       );
 
-      const configCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("profiles/testbot/config.json"),
-      );
+      const configCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) =>
+          (c[0] as string).endsWith("profiles/testbot/config.json"),
+        );
       expect(configCall).toBeDefined();
       const writtenCfg = JSON.parse(configCall![1] as string);
-      expect(writtenCfg.node_identity_file).toContain("profiles/testbot/identity.json");
+      expect(writtenCfg.node_identity_file).toContain(
+        "profiles/testbot/identity.json",
+      );
       expect(writtenCfg.node_name).toBe("TestBot");
 
-      const idCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("profiles/testbot/identity.json"),
-      );
+      const idCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) =>
+          (c[0] as string).endsWith("profiles/testbot/identity.json"),
+        );
       expect(idCall).toBeDefined();
       const writtenId = JSON.parse(idCall![1] as string);
       expect(writtenId.node_id).toBe("agent-1");
 
-      const metaCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("profiles.json"),
-      );
+      const metaCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) => (c[0] as string).endsWith("profiles.json"));
       expect(metaCall).toBeDefined();
       const writtenMeta = JSON.parse(metaCall![1] as string);
       expect(writtenMeta.active).toBe("testbot");
       expect(writtenMeta.profiles).toContain("testbot");
 
-      expect(setConfigDir).toHaveBeenCalledWith(expect.stringContaining("profiles/testbot"));
+      expect(setConfigDir).toHaveBeenCalledWith(
+        expect.stringContaining("profiles/testbot"),
+      );
       expect(reloadConfig).toHaveBeenCalled();
     });
 
@@ -198,17 +218,33 @@ describe("profiles", () => {
       vi.mocked(existsSync).mockReturnValue(false);
       const { createProfile } = await import("../src/profiles.js");
       const cfg = {
-        node_name: "Bot", node_display_name: "Bot", inference_type: "openrouter" as const,
-        openrouter_api_key: "", self_hosted_api_base: "", fortytwo_api_base: "",
-        node_identity_file: "", poll_interval: 120, model_name: "", llm_concurrency: 40,
-        llm_timeout: 120, min_balance: 5, node_role: "JUDGE", answerer_system_prompt: "",
+        node_name: "Bot",
+        node_display_name: "Bot",
+        inference_type: "openrouter" as const,
+        openrouter_api_key: "",
+        self_hosted_api_base: "",
+        fortytwo_api_base: "",
+        node_identity_file: "",
+        poll_interval: 120,
+        model_name: "",
+        llm_concurrency: 40,
+        llm_timeout: 120,
+        min_balance: 5,
+        node_role: "JUDGE",
+        answerer_system_prompt: "",
       };
       createProfile("bot", cfg);
 
-      const idCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("identity.json") && !(c[0] as string).endsWith("profiles.json"),
-      );
-      const allPaths = vi.mocked(writeFileSync).mock.calls.map((c) => c[0] as string);
+      const idCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find(
+          (c) =>
+            (c[0] as string).endsWith("identity.json") &&
+            !(c[0] as string).endsWith("profiles.json"),
+        );
+      const allPaths = vi
+        .mocked(writeFileSync)
+        .mock.calls.map((c) => c[0] as string);
       expect(allPaths.some((p) => p.endsWith("bot/identity.json"))).toBe(false);
     });
 
@@ -222,18 +258,30 @@ describe("profiles", () => {
 
       const { createProfile } = await import("../src/profiles.js");
       const cfg = {
-        node_name: "Bot", node_display_name: "Bot", inference_type: "openrouter" as const,
-        openrouter_api_key: "", self_hosted_api_base: "", fortytwo_api_base: "",
-        node_identity_file: "", poll_interval: 120, model_name: "", llm_concurrency: 40,
-        llm_timeout: 120, min_balance: 5, node_role: "JUDGE", answerer_system_prompt: "",
+        node_name: "Bot",
+        node_display_name: "Bot",
+        inference_type: "openrouter" as const,
+        openrouter_api_key: "",
+        self_hosted_api_base: "",
+        fortytwo_api_base: "",
+        node_identity_file: "",
+        poll_interval: 120,
+        model_name: "",
+        llm_concurrency: 40,
+        llm_timeout: 120,
+        min_balance: 5,
+        node_role: "JUDGE",
+        answerer_system_prompt: "",
       };
       createProfile("bot", cfg);
 
-      const metaCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("profiles.json"),
-      );
+      const metaCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) => (c[0] as string).endsWith("profiles.json"));
       const writtenMeta = JSON.parse(metaCall![1] as string);
-      expect(writtenMeta.profiles.filter((p: string) => p === "bot").length).toBe(1);
+      expect(
+        writtenMeta.profiles.filter((p: string) => p === "bot").length,
+      ).toBe(1);
     });
   });
 
@@ -249,7 +297,9 @@ describe("profiles", () => {
         JSON.stringify({ active: "bot", profiles: ["bot", "other"] }),
       );
       const { deleteProfile } = await import("../src/profiles.js");
-      expect(() => deleteProfile("bot")).toThrow("Cannot delete the active profile");
+      expect(() => deleteProfile("bot")).toThrow(
+        "Cannot delete the active profile",
+      );
     });
 
     it("throws when profile not found", async () => {
@@ -258,7 +308,7 @@ describe("profiles", () => {
         JSON.stringify({ active: "bot", profiles: ["bot"] }),
       );
       const { deleteProfile } = await import("../src/profiles.js");
-      expect(() => deleteProfile("nonexistent")).toThrow('not found');
+      expect(() => deleteProfile("nonexistent")).toThrow("not found");
     });
 
     it("removes profile dir and updates meta", async () => {
@@ -274,9 +324,9 @@ describe("profiles", () => {
         { recursive: true, force: true },
       );
 
-      const metaCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("profiles.json"),
-      );
+      const metaCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) => (c[0] as string).endsWith("profiles.json"));
       const writtenMeta = JSON.parse(metaCall![1] as string);
       expect(writtenMeta.profiles).toEqual(["bot"]);
       expect(writtenMeta.active).toBe("bot");
@@ -306,13 +356,15 @@ describe("profiles", () => {
       const { switchProfile } = await import("../src/profiles.js");
       switchProfile("other");
 
-      const metaCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("profiles.json"),
-      );
+      const metaCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) => (c[0] as string).endsWith("profiles.json"));
       const writtenMeta = JSON.parse(metaCall![1] as string);
       expect(writtenMeta.active).toBe("other");
 
-      expect(setConfigDir).toHaveBeenCalledWith(expect.stringContaining("profiles/other"));
+      expect(setConfigDir).toHaveBeenCalledWith(
+        expect.stringContaining("profiles/other"),
+      );
       expect(reloadConfig).toHaveBeenCalled();
     });
   });
@@ -337,7 +389,10 @@ describe("profiles", () => {
       vi.mocked(readFileSync).mockImplementation((path) => {
         const p = path as string;
         if (p.endsWith("profiles.json")) {
-          return JSON.stringify({ active: "bot-a", profiles: ["bot-a", "bot-b"] });
+          return JSON.stringify({
+            active: "bot-a",
+            profiles: ["bot-a", "bot-b"],
+          });
         }
         if (p.includes("bot-a") && p.endsWith("config.json")) {
           return JSON.stringify({ node_name: "BotA" });
@@ -348,7 +403,8 @@ describe("profiles", () => {
         return "{}";
       });
       vi.mocked(loadIdentity).mockImplementation((path) => {
-        if (path.includes("bot-a")) return { node_id: "id-aaa-bbb", node_secret: "s" };
+        if (path.includes("bot-a"))
+          return { node_id: "id-aaa-bbb", node_secret: "s" };
         return null;
       });
 
@@ -398,7 +454,10 @@ describe("profiles", () => {
         inference_type: "openrouter",
         node_identity_file: "/tmp/.fortytwo/identity.json",
       };
-      const legacyIdentity = JSON.stringify({ agent_id: "old-id", node_secret: "old-sec" });
+      const legacyIdentity = JSON.stringify({
+        agent_id: "old-id",
+        node_secret: "old-sec",
+      });
 
       vi.mocked(existsSync).mockImplementation((path) => {
         const p = path as string;
@@ -409,7 +468,8 @@ describe("profiles", () => {
       });
       vi.mocked(readFileSync).mockImplementation((path) => {
         const p = path as string;
-        if (p.endsWith(".fortytwo/config.json")) return JSON.stringify(legacyCfg);
+        if (p.endsWith(".fortytwo/config.json"))
+          return JSON.stringify(legacyCfg);
         if (p.endsWith(".fortytwo/identity.json")) return legacyIdentity;
         throw new Error(`Unexpected read: ${p}`);
       });
@@ -422,23 +482,29 @@ describe("profiles", () => {
         { recursive: true },
       );
 
-      const cfgCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).includes("profiles/my-judge-bot/config.json"),
-      );
+      const cfgCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) =>
+          (c[0] as string).includes("profiles/my-judge-bot/config.json"),
+        );
       expect(cfgCall).toBeDefined();
       const writtenCfg = JSON.parse(cfgCall![1] as string);
-      expect(writtenCfg.node_identity_file).toContain("profiles/my-judge-bot/identity.json");
+      expect(writtenCfg.node_identity_file).toContain(
+        "profiles/my-judge-bot/identity.json",
+      );
       expect(writtenCfg.agent_name).toBe("My Judge Bot");
 
-      const idCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).includes("profiles/my-judge-bot/identity.json"),
-      );
+      const idCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) =>
+          (c[0] as string).includes("profiles/my-judge-bot/identity.json"),
+        );
       expect(idCall).toBeDefined();
       expect(idCall![1]).toBe(legacyIdentity);
 
-      const metaCall = vi.mocked(writeFileSync).mock.calls.find(
-        (c) => (c[0] as string).endsWith("profiles.json"),
-      );
+      const metaCall = vi
+        .mocked(writeFileSync)
+        .mock.calls.find((c) => (c[0] as string).endsWith("profiles.json"));
       expect(metaCall).toBeDefined();
       const writtenMeta = JSON.parse(metaCall![1] as string);
       expect(writtenMeta.active).toBe("my-judge-bot");
@@ -465,12 +531,13 @@ describe("profiles", () => {
 
   describe("initProfiles", () => {
     it("calls migrateIfNeeded, setConfigDir and reloadConfig", async () => {
-
       vi.mocked(existsSync).mockReturnValue(false);
       const { initProfiles } = await import("../src/profiles.js");
       initProfiles();
 
-      expect(setConfigDir).toHaveBeenCalledWith(expect.stringContaining("profiles/"));
+      expect(setConfigDir).toHaveBeenCalledWith(
+        expect.stringContaining("profiles/"),
+      );
       expect(reloadConfig).toHaveBeenCalled();
     });
   });

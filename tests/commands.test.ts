@@ -6,7 +6,7 @@ const mockConfig = {
   inference_type: "openrouter" as const,
   openrouter_api_key: "sk-or-v1-abcdef1234567890",
   self_hosted_api_base: "",
-  fortytwo_api_base: "https://app.fortytwo.network/api",
+  fortytwo_api_base: "https://node.fortytwo.network/api",
   identity_file: "/tmp/identity.json",
   poll_interval: 120,
   model_name: "qwen/qwen3.5-35b-a3b",
@@ -21,7 +21,9 @@ let savedConfig: any = null;
 
 vi.mock("../src/config.js", () => ({
   get: () => ({ ...mockConfig }),
-  saveConfig: (cfg: any) => { savedConfig = cfg; },
+  saveConfig: (cfg: any) => {
+    savedConfig = cfg;
+  },
   reloadConfig: () => {},
 }));
 
@@ -41,9 +43,16 @@ vi.mock("../src/llm.js", () => ({
 }));
 
 vi.mock("../src/profiles.js", () => ({
-  listProfiles: vi.fn().mockReturnValue([
-    { name: "default", active: true, agentName: "testbot", nodeId: "test-agent-id" },
-  ]),
+  listProfiles: vi
+    .fn()
+    .mockReturnValue([
+      {
+        name: "default",
+        active: true,
+        agentName: "testbot",
+        nodeId: "test-agent-id",
+      },
+    ]),
   switchProfile: vi.fn(),
 }));
 
@@ -138,14 +147,18 @@ describe("executeCommand", () => {
   });
 
   it("/exit calls process.exit(0)", () => {
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation(() => undefined as never);
     executeCommand("/exit");
     expect(exitSpy).toHaveBeenCalledWith(0);
     exitSpy.mockRestore();
   });
 
   it("/quit calls process.exit(0)", () => {
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation(() => undefined as never);
     executeCommand("/quit");
     expect(exitSpy).toHaveBeenCalledWith(0);
     exitSpy.mockRestore();
@@ -160,8 +173,18 @@ describe("executeCommand", () => {
     it("/profile list shows profiles", async () => {
       const { listProfiles } = await import("../src/profiles.js");
       vi.mocked(listProfiles).mockReturnValue([
-        { name: "my-judge", active: true, agentName: "MyJudge", nodeId: "aaaa-bbbb-cccc" },
-        { name: "answerer", active: false, agentName: "Answerer", nodeId: "dddd-eeee-ffff" },
+        {
+          name: "my-judge",
+          active: true,
+          agentName: "MyJudge",
+          nodeId: "aaaa-bbbb-cccc",
+        },
+        {
+          name: "answerer",
+          active: false,
+          agentName: "Answerer",
+          nodeId: "dddd-eeee-ffff",
+        },
       ]);
       const result = executeCommand("/profile list");
       expect(result[0]).toBe("Profiles:");
@@ -204,12 +227,16 @@ describe("executeCommand", () => {
       ]);
       const result = executeCommand("/profile switch");
       expect(result[0]).toContain("Usage:");
-      expect(result).toEqual(expect.arrayContaining([expect.stringContaining("Available profiles")]));
+      expect(result).toEqual(
+        expect.arrayContaining([expect.stringContaining("Available profiles")]),
+      );
     });
 
     it("/profile switch returns error for unknown profile", async () => {
       const { switchProfile } = await import("../src/profiles.js");
-      vi.mocked(switchProfile).mockImplementation(() => { throw new Error('Profile "nope" not found'); });
+      vi.mocked(switchProfile).mockImplementation(() => {
+        throw new Error('Profile "nope" not found');
+      });
       const result = executeCommand("/profile switch nope");
       expect(result[0]).toContain("not found");
     });

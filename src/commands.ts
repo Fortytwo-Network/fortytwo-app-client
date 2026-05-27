@@ -34,7 +34,9 @@ const CONFIG_KEYS = [
 
 export const SUGGESTIONS = [
   "/help",
-  "/ask ",
+  "/capability",
+  "/capability history",
+  "/challenge list",
   "/identity",
   "/profile",
   "/profile list",
@@ -61,7 +63,8 @@ export function executeCommand(input: string): string[] {
   if (cmd === "help") {
     return [
       "Commands:",
-      "  /ask <question>        — submit a question to the network",
+      "  /capability [history]  — show capability rank / tier / history",
+      "  /challenge list        — list active Capability Challenge rounds",
       "  /identity              — show node_id and node_secret",
       "  /profile list          — list all profiles",
       "  /profile create        — create a new profile",

@@ -1,9 +1,5 @@
 import { join } from "node:path";
-import {
-  type UserConfig,
-  type InferenceType,
-  getConfigDir,
-} from "./config.js";
+import { type UserConfig, type InferenceType, getConfigDir } from "./config.js";
 
 export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
@@ -18,7 +14,10 @@ export interface FetchModelsResult {
   error?: string;
 }
 
-export async function fetchModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult> {
+export async function fetchModels(
+  baseUrl: string,
+  apiKey: string,
+): Promise<FetchModelsResult> {
   const url = `${baseUrl.replace(/\/+$/, "")}/models`;
 
   let resp: Response;
@@ -28,7 +27,11 @@ export async function fetchModels(baseUrl: string, apiKey: string): Promise<Fetc
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    return { ok: false, models: [], error: `Cannot reach ${url} — is the server running?` };
+    return {
+      ok: false,
+      models: [],
+      error: `Cannot reach ${url} — is the server running?`,
+    };
   }
 
   if (!resp.ok) {
@@ -50,23 +53,37 @@ export async function fetchModels(baseUrl: string, apiKey: string): Promise<Fetc
 export function validateConfig(values: Record<string, string>): ValidateResult {
   const inferenceType = values.inference_type;
   if (inferenceType !== "openrouter" && inferenceType !== "self-hosted") {
-    return { ok: false, error: `inference_type is invalid: "${inferenceType}". Options: "openrouter" | "self-hosted"` };
+    return {
+      ok: false,
+      error: `inference_type is invalid: "${inferenceType}". Options: "openrouter" | "self-hosted"`,
+    };
   }
 
   if (inferenceType === "openrouter" && !values.openrouter_api_key) {
-    return { ok: false, error: `openrouter_api_key is required for OpenRouter inference. Use /config set openrouter_api_key <key>` };
+    return {
+      ok: false,
+      error: `openrouter_api_key is required for OpenRouter inference. Use /config set openrouter_api_key <key>`,
+    };
   }
   if (inferenceType === "self-hosted" && !values.self_hosted_api_base) {
-    return { ok: false, error: `self_hosted_api_base is not set for local inference. Use /config set self_hosted_api_base <url>` };
+    return {
+      ok: false,
+      error: `self_hosted_api_base is not set for local inference. Use /config set self_hosted_api_base <url>`,
+    };
   }
 
   if (!values.model_name) {
-    return { ok: false, error: `model_name is not set. Use /config set model_name <model>` };
+    return {
+      ok: false,
+      error: `model_name is not set. Use /config set model_name <model>`,
+    };
   }
   return { ok: true };
 }
 
-export async function validateModel(values: Record<string, string>): Promise<ValidateResult> {
+export async function validateModel(
+  values: Record<string, string>,
+): Promise<ValidateResult> {
   const isLocal = values.inference_type === "self-hosted";
   const baseUrl = isLocal
     ? values.self_hosted_api_base?.replace(/\/+$/, "")
@@ -91,7 +108,10 @@ export async function validateModel(values: Record<string, string>): Promise<Val
 
   if (!resp.ok) {
     if (resp.status === 401 || resp.status === 403) {
-      return { ok: false, error: isLocal ? `Auth rejected (${resp.status})` : "Invalid API key" };
+      return {
+        ok: false,
+        error: isLocal ? `Auth rejected (${resp.status})` : "Invalid API key",
+      };
     }
     return { ok: false, error: `API returned ${resp.status}` };
   }
@@ -105,7 +125,10 @@ export async function validateModel(values: Record<string, string>): Promise<Val
     }
 
     if (!models.includes(model)) {
-      return { ok: false, error: `Model "${model}" not found. Choose correct one and restart the client.` };
+      return {
+        ok: false,
+        error: `Model "${model}" not found. Choose correct one and restart the client.`,
+      };
     }
   } catch {
     return { ok: true };
@@ -117,13 +140,17 @@ export async function validateModel(values: Record<string, string>): Promise<Val
 export function buildConfig(values: Record<string, string>): UserConfig {
   const isLocal = values.inference_type === "self-hosted";
   return {
-    node_name: values.node_name || values.node_display_name || values.node_id || "",
-    node_display_name: values.node_name || values.node_display_name || values.node_id || "",
+    node_name:
+      values.node_name || values.node_display_name || values.node_id || "",
+    node_display_name:
+      values.node_name || values.node_display_name || values.node_id || "",
     inference_type: isLocal ? "self-hosted" : "openrouter",
     openrouter_api_key: values.openrouter_api_key ?? "",
     self_hosted_api_base: values.self_hosted_api_base ?? "",
-    fortytwo_api_base: values.fortytwo_api_base ?? "https://app.fortytwo.network/api",
-    node_identity_file: values.node_identity_file ?? join(getConfigDir(), "identity.json"),
+    fortytwo_api_base:
+      values.fortytwo_api_base ?? "https://node.fortytwo.network/api",
+    node_identity_file:
+      values.node_identity_file ?? join(getConfigDir(), "identity.json"),
     poll_interval: Number(values.poll_interval) || 120,
     model_name: values.model_name || (isLocal ? "" : "qwen/qwen3.5-35b-a3b"),
     llm_concurrency: 40,
