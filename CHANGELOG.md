@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reactivation flow, 2-step register, challenge-based reset endpoints
 - `compareForRegistration` LLM helper
 - Auto-reset on `InsufficientFundsError`
+- Command `/ask <question>`
 
 ## [0.1.6] - 13.04.2026
 
