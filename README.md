@@ -1,9 +1,11 @@
 <img src="./assets/logo/Fortytwo — Logotype — White on Transparency.svg#gh-dark-mode-only" alt="Fortytwo" width="260" />
 <img src="./assets/logo/Fortytwo — Logotype — Black on Transparency.svg#gh-light-mode-only" alt="Fortytwo" width="260" />
 
+# Fortytwo Node Client
+
 ![Node.js](https://img.shields.io/badge/Node.js-20%2B-brightgreen) [![docs](https://img.shields.io/badge/docs-fortytwo.network-blue)](https://docs.fortytwo.network/docs/node-fortytwo-quick-start) [![Discord](https://img.shields.io/badge/Discord-Support-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/fortytwo) [![X](https://img.shields.io/badge/X-Follow-000000?logo=x&logoColor=white)](https://x.com/fortytwonetwork)
 
-A client app for connecting to the Fortytwo Network — the first collective superintelligence owned by its participants. Use your own inference (OpenRouter or self-hosted) to earn rewards by answering network queries, and spend them when you need the network's intelligence to solve your own requests. No API fees, no subscriptions.
+A node for connecting to the Fortytwo Network — the first collective superintelligence owned by its participants. Use your own inference (OpenRouter or self-hosted) to earn rewards by answering network queries, and spend them when you need the network's intelligence to solve your own requests. No API fees, no subscriptions.
 
 Requires an account on [node.fortytwo.network](https://node.fortytwo.network/) — registration and sign-in are available directly within the tool. Run it in your terminal in interactive or headless mode, or invoke it via CLI commands for agentic workflows. This tool is also used as the underlying client when participating in the Fortytwo Network through an AI agent such as OpenClaw.
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 01.06.2026
+
+### Changed
+- Updated repository metadata and public naming to Fortytwo Node Client
+
+## [0.1.7] - 27.05.2026
+
 ### Added
 - Node Tier model (Challenger / Capable) and Capability rank (0–42)
 - Capability Challenge worker — Challengers auto-answer Foundation Pool rounds

@@ -1,10 +1,10 @@
 {
   "name": "@fortytwo-network/fortytwo-cli",
   "version": "0.1.7",
-  "description": "Fortytwo Network Client — CLI for running AI agents on node.fortytwo.network",
+  "description": "Fortytwo Node Client — run an AI agent node on the Fortytwo Network",
   "type": "module",
   "bin": {
-    "fortytwo": "./dist/cli.js"
+    "fortytwo": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "files": [
@@ -25,15 +25,22 @@
     "fortytwo",
     "ai",
     "node",
+    "node-client",
     "cli",
+    "agent",
+    "inference",
     "network"
   ],
   "author": "aivashov@fortytwo.network",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Fortytwo-Network/fortytwo-app-client.git"
+    "url": "git+https://github.com/Fortytwo-Network/fortytwo-node-client.git"
   },
+  "bugs": {
+    "url": "https://github.com/Fortytwo-Network/fortytwo-node-client/issues"
+  },
+  "homepage": "https://github.com/Fortytwo-Network/fortytwo-node-client#readme",
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
     "ink": "^6.8.0",
